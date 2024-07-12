@@ -1,7 +1,7 @@
 # fnt-etl
 
 ## Description
-This project houses the various ETL scripts required for AWS Lambda and AWS Glue. TBD on upload procedures - will use AWS CLI and Terraform to deploy serverless applications.
+This project houses the various ETL scripts required for AWS Lambda and AWS Glue. TBD on upload procedures - will use AWS CLI and Terraform to deploy serverless applications. 
 
 ## Project Structure
 
