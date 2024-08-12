@@ -1,0 +1,85 @@
+{
+  "Comment": "This state machine orchestrates the COF batch ETL pipeline",
+  "StartAt": "Validate Batch File",
+  "States": {
+    "Validate Batch File": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-west-2:730335645199:function:dev-fnt-batch-validate",
+      "Next": "Validation Success?",
+      "ResultPath": "$.taskresult"
+    },
+    "Validation Success?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.taskresult.validation",
+          "StringEquals": "SUCCESS",
+          "Next": "Run Glue Job"
+        },
+        {
+          "Variable": "$.taskresult.validation",
+          "StringEquals": "FAILURE",
+          "Next": "FAIL - Move file to error folder"
+        }
+      ]
+    },
+    "FAIL - Move file to error folder": {
+      "Type": "Task",
+      "Next": "Error Notification",
+      "Resource": "arn:aws:lambda:us-west-2:730335645199:function:dev-fnt-move-file"
+    },
+    "Error Notification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:sns:publish",
+      "Parameters": {
+        "Message.$": "$",
+        "TopicArn": "arn:aws:sns:us-west-2:730335645199:batch-etl-email"
+      },
+      "Next": "Fail"
+    },
+    "Run Glue Job": {
+      "Type": "Task",
+      "Next": "Move file to archive",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "$.taskresult.job_name",
+        "Arguments": {
+          "--source_key": "$.taskresult.key_name",
+          "--source_bucket": "$.taskresult.bucket_name",
+          "--dest_bucket": "$.taskresult.stage_bucket_name",
+          "--batch_file_name": "$.taskresult.latestBatchFileName",
+          "--batch_timestamp": "$.taskresult.latestBatchTimestamp"
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Comment": "Error fall back for glue job",
+          "ResultPath": "$.error-info",
+          "Next": "FAIL - Move file to error folder"
+        }
+      ]
+    },
+    "Fail": {
+      "Type": "Fail",
+      "Cause": "validation failed",
+      "Error": "ValidationError"
+    },
+    "Move file to archive": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-west-2:730335645199:function:dev-fnt-move-file",
+      "Next": "Success Notification"
+    },
+    "Success Notification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:sns:publish",
+      "Parameters": {
+        "Message.$": "$",
+        "TopicArn": "arn:aws:sns:us-west-2:730335645199:batch-etl-email"
+      },
+      "End": true
+    }
+  }
+}

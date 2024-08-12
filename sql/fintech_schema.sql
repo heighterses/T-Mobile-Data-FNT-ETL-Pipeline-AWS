@@ -1,0 +1,53 @@
+CREATE SCHEMA IF NOT EXISTS fnt;
+
+CREATE TABLE IF NOT EXISTS fnt.tbl_cof_account_summary(
+    rowid INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    latestBatchTimestamp DATETIME,
+    latestBatchFileName TEXT,
+    lastTimestampUpdated DATETIME NOT NULL,
+    surrogateAccountId TEXT NOT NULL UNIQUE,
+    nextPaymentDueDate DATE,
+    creditLimit NUMERIC,
+    availableCredit NUMERIC,
+    currentBalance NUMERIC,
+    nextStatementDate DATE,
+    lastPaymentDate DATE,
+    lastPaymentAmount NUMERIC,
+    dateLastUpdated DATE
+);
+
+CREATE TABLE IF NOT EXISTS fnt.tbl_cof_transactions(
+    rowid INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    latestBatchTimestamp DATETIME,
+    latestBatchFileName TEXT,
+    lastTimestampUpdated DATETIME NOT NULL,
+    creditCardLastFour TEXT,
+    surrogateAccountId TEXT NOT NULL REFERENCES fnt.tbl_cof_account_summary(surrogateAccountId),
+    customerId TEXT NOT NULL,
+    transactionEffectiveDate DATE,
+    transactionPostingDate DATE,
+    transactionPostingTime TIME,
+    authorizationDate DATE,
+    transactionCode INTEGER,
+    transactionType INTEGER,
+    transactionDescription TEXT,
+    dbCrIndicator TEXT,
+    transactionReferenceNumber TEXT,
+    internalExternalBrandFlag TEXT,
+    transactionSequenceNumber NUMERIC,
+    authorizationCode TEXT,
+    transactionAmount NUMERIC,
+    transferFlag TEXT,
+    transactionCurrencyCode TEXT,
+    billedCurrencyCode TEXT,
+    conversionRate NUMERIC,
+    merchantStore INTEGER,
+    merchantId TEXT,
+    merchantCategoryCode TEXT,
+    merchantName TEXT,
+    merchantCity TEXT,
+    merchantState TEXT,
+    merchantCountry TEXT,
+    merchantPostalCode TEXT,
+    invoiceNumber TEXT
+);
