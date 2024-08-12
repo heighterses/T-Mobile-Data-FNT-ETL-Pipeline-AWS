@@ -117,14 +117,14 @@ Note that future versions of this might be deployed using AWS CloudFormation tem
 ### Branching Strategy
 The branching strategy we are using is **Feature Branching**
 
-To start work on a feature/hotfix/bug first pull down `main` to get the lastest updated version of the code.
+To start work on a feature/hotfix/bug first pull down `tmo/main` to get the lastest updated version of the code.
 
-Create a branch from `main`, the branch name should follow the format of [JIRA-Ticket/Issue-Number]-FeatureDescription. E.g CD-123-Dashboard-Sidebar
+Create a branch from `tmo/main`, the branch name should follow the format of [JIRA-Ticket/Issue-Number]-FeatureDescription. E.g., SPE-173-Dummy-Data.
 
 Once you have created your branch, complete your work and commit in increments with descriptive commit messages.
 
-If there has been new commits to `main` make sure to checkout `main` and `git pull` to pull down the latest code from `main`, then checkout to your branch and merge `main` into your branch.
+If there has been new commits to `tmo/main` make sure to checkout `tmo/main` and `git pull` to pull down the latest code from `tmo/main`, then checkout to your branch and merge `tmo/main` into your branch.
 
 Then create a pull request.
 
-When merging your PR, make sure you to select the "squash" (default) merge strategy to keep the commits for your feature branch unified into one commit on `main`.
+When merging your PR, make sure you to select the "squash" (default) merge strategy to keep the commits for your feature branch unified into one commit on `tmo/main`.
