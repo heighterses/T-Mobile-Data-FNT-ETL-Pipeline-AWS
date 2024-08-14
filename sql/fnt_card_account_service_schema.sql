@@ -2,9 +2,9 @@ CREATE SCHEMA IF NOT EXISTS fnt;
 
 CREATE TABLE IF NOT EXISTS fnt.tbl_cof_account_summary(
     rowid INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    latestBatchTimestamp DATETIME,
+    latestBatchTimestamp TEXT,
     latestBatchFileName TEXT,
-    lastTimestampUpdated DATETIME NOT NULL,
+    lastTimestampUpdated TEXT NOT NULL,
     surrogateAccountId TEXT NOT NULL UNIQUE,
     nextPaymentDueDate DATE,
     creditLimit NUMERIC,
@@ -18,9 +18,9 @@ CREATE TABLE IF NOT EXISTS fnt.tbl_cof_account_summary(
 
 CREATE TABLE IF NOT EXISTS fnt.tbl_cof_transactions(
     rowid INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    latestBatchTimestamp DATETIME,
+    latestBatchTimestamp TEXT,
     latestBatchFileName TEXT,
-    lastTimestampUpdated DATETIME NOT NULL,
+    lastTimestampUpdated TEXT NOT NULL,
     creditCardLastFour TEXT,
     surrogateAccountId TEXT NOT NULL REFERENCES fnt.tbl_cof_account_summary(surrogateAccountId),
     customerId TEXT NOT NULL,

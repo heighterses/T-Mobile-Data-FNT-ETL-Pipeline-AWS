@@ -12,7 +12,7 @@ from datetime import datetime
 import pandas as pd
 import sys
 import logging
-#import psycopg2
+import psycopg2
 import json
 import boto3
 from botocore.exceptions import ClientError
@@ -78,38 +78,38 @@ def get_db_secret(secret_name, region_name):
 
 
 ###### database connector function ######
-# def db_connector(credential):
-#     """
-#     This function creates the connection object for Aurora Postgres
+def db_connector(credential):
+    """
+    This function creates the connection object for Aurora Postgres
 
-#     Args:
-#         credential (dict): Dictionary containing secret key:value pairs for database connection
+    Args:
+        credential (dict): Dictionary containing secret key:value pairs for database connection
 
-#     Returns
-#         conn (object): Connection object on Aurora Postgres instance
-#     """
+    Returns
+        conn (object): Connection object on Aurora Postgres instance
+    """
 
-#     # format only needed key:values from credential for connection string
-#     user_name = credential['USER_NAME']
-#     password = credential['PASSWORD']
-#     rds_host = credential['RDS_HOST']
-#     rds_port = credential['RDS_PORT']
+    # format only needed key:values from credential for connection string
+    user_name = credential['USER_NAME']
+    password = credential['PASSWORD']
+    rds_host = credential['RDS_HOST']
+    rds_port = credential['RDS_PORT']
 
-#     # create connection
-#     try:
-#         conn = psycopg2.connect(host=rds_host,
-#                                 user=user_name,
-#                                 password=password,
-#                                 port=rds_port)
-#         conn.autocommit = True
-#         logger_function("SUCCESS: Connection to Aurora Postgres instance succeeded.", type="info")
-#     except psycopg2.Error as e:
-#         logger_function("ERROR: Could not connect to Postgres instance.", type="error")
-#         logger_function(e, type="error")
-#         sys.exit()
+    # create connection
+    try:
+        conn = psycopg2.connect(host=rds_host,
+                                user=user_name,
+                                password=password,
+                                port=rds_port)
+        conn.autocommit = True
+        logger_function("SUCCESS: Connection to Aurora Postgres instance succeeded.", type="info")
+    except psycopg2.Error as e:
+        logger_function("ERROR: Could not connect to Postgres instance.", type="error")
+        logger_function(e, type="error")
+        sys.exit()
 
-#     # return connection object
-#     return conn
+    # return connection object
+    return conn
 
 
 ###### temp table function ######
@@ -130,9 +130,9 @@ def get_temp_table_schema():
     sql0 = """CREATE SCHEMA IF NOT EXISTS fnt;"""
     sql1 =   """
             CREATE TABLE IF NOT EXISTS fnt.tbl_temp_cof_account_summary(
-                latestBatchTimestamp DATETIME,
+                latestBatchTimestamp TEXT,
                 latestBatchFileName TEXT,
-                lastTimestampUpdated DATETIME NOT NULL,
+                lastTimestampUpdated TEXT NOT NULL,
                 surrogateAccountId TEXT NOT NULL UNIQUE,
                 nextPaymentDueDate DATE,
                 creditLimit NUMERIC,
@@ -187,7 +187,7 @@ response = s3.get_object(Bucket=source_bucket, Key=source_key)
 file_content = response['Body'].read()
 
 # Assign column headers based on known schema
-column_headers_all = ['RecordType','brand','SurrogateAccountID','Privacymail', 'PrivacyDateEmail','PrivacyEmail','PrivacyDateEmail','PrivacyPhone',
+column_headers_all = ['RecordType','brand','SurrogateAccountID','Privacymail', 'PrivacyDateMail','PrivacyEmail','PrivacyDateEmail','PrivacyPhone',
                   'PrivacyDatePhone','GLBFlag','Cardscheme','AccountType','BankruptcyIndicator',
                   'AccountClosedIndicator','AccountClosedReason','FraudIndicator','HardshipIndicator',
                   'DeceasedIndicator','SoldIndicator','ChargeoffIndicator','PotentialFraudIndicator',
@@ -273,41 +273,41 @@ json_obj = json.dumps(result)
 s3.put_object(Bucket=dest_bucket, Key=result['my_key'], Body=json_obj)
 logger_function("Metadate written to stage bucket.", type="info")
 
-# # return credentials for connecting to Aurora Postgres
-# logger_function("Attempting Aurora Postgres connection...", type="info")
-# #TODO update secret name
-# credential = get_db_secret(secret_name="auroraPostgres2", region_name="us-west-2")
+# return credentials for connecting to Aurora Postgres
+logger_function("Attempting Aurora Postgres connection...", type="info")
+#TODO update secret name
+credential = get_db_secret(secret_name="auroraPostgres2", region_name="us-west-2")
 
-# # connect to database
-# conn = db_connector(credential)
-# cursor = conn.cursor()
+# connect to database
+conn = db_connector(credential)
+cursor = conn.cursor()
 
-# # (1) create if not exists temp table in RDS (e.g., tbl_temp_cof_account_master)
-# sql0, sql1, sql2, temp_tbl_name = get_temp_table_schema()
-# cursor.execute(sql0)
-# cursor.execute(sql1)
+# (1) create if not exists temp table in RDS (e.g., tbl_temp_cof_account_master)
+sql0, sql1, sql2, temp_tbl_name = get_temp_table_schema()
+cursor.execute(sql0)
+cursor.execute(sql1)
 
-# # (2) whether we create a new table or not, need to remove all records as it should be empty
-# cursor.execute(sql2)
+# (2) whether we create a new table or not, need to remove all records as it should be empty
+cursor.execute(sql2)
 
-# # (3) upload dataframe into sql table
-# #TODO use pyspark
-# buffer = io.StringIO()
-# df.to_csv(buffer, index=False, header=False)
-# buffer.seek(0)
-# with cursor:
-#     try:
-#         cursor.copy_expert(f"COPY {temp_tbl_name} FROM STDIN (FORMAT 'csv', HEADER false)", buffer)
-#     except (Exception, psycopg2.DatabaseError) as error:
-#         logger_function("Error: %s" % error, type="error")
+# (3) upload dataframe into sql table
+#TODO use pyspark
+buffer = io.StringIO()
+df.to_csv(buffer, index=False, header=False)
+buffer.seek(0)
+with cursor:
+    try:
+        cursor.copy_expert(f"COPY {temp_tbl_name} FROM STDIN (FORMAT 'csv', HEADER false)", buffer)
+    except (Exception, psycopg2.DatabaseError) as error:
+        logger_function("Error: %s" % error, type="error")
 
-# # (4) TODO move temp table data to "operational table":
-# #options are using Lambda (bad), using Postgres trigger (better), step functions, glue, etc. (best)
+# (4) TODO move temp table data to "operational table":
+#options are using Lambda (bad), using Postgres trigger (better), step functions, glue, etc. (best)
 
-# # closing the connection
-# cursor.close()
-# conn.close()
-# logger_function("Batch file copied to RDS.", type="info")
+# closing the connection
+cursor.close()
+conn.close()
+logger_function("Batch file copied to RDS.", type="info")
 
 # Commit the Glue job
 job.commit()

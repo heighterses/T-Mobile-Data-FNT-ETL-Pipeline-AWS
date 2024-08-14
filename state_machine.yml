@@ -42,13 +42,13 @@
       "Next": "Move file to archive",
       "Resource": "arn:aws:states:::glue:startJobRun.sync",
       "Parameters": {
-        "JobName": "$.taskresult.job_name",
+        "JobName.$": "$.taskresult.job_name",
         "Arguments": {
-          "--source_key": "$.taskresult.key_name",
-          "--source_bucket": "$.taskresult.bucket_name",
-          "--dest_bucket": "$.taskresult.stage_bucket_name",
-          "--batch_file_name": "$.taskresult.latestBatchFileName",
-          "--batch_timestamp": "$.taskresult.latestBatchTimestamp"
+          "--source_key.$": "$.taskresult.key_name",
+          "--source_bucket.$": "$.taskresult.bucket_name",
+          "--dest_bucket.$": "$.taskresult.stage_bucket_name",
+          "--batch_file_name.$": "$.taskresult.latestBatchFileName",
+          "--batch_timestamp.$": "$.taskresult.latestBatchTimestamp"
         }
       },
       "Catch": [
@@ -60,7 +60,8 @@
           "ResultPath": "$.error-info",
           "Next": "FAIL - Move file to error folder"
         }
-      ]
+      ],
+      "ResultPath": "$.glueJobResult"
     },
     "Fail": {
       "Type": "Fail",
