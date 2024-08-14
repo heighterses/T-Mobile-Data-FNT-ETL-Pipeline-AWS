@@ -7,7 +7,7 @@ import json
 import pandas as pd
 #from cerberus import Validator
 from datetime import datetime
-import boto3
+import boto3 # type: ignore
 import os
 from io import BytesIO
 import logging

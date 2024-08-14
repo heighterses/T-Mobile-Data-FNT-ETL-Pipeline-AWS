@@ -5,7 +5,7 @@ This Lambda function creates the notification object
 # packages
 import logging
 import json
-import boto3
+import boto3 # type: ignore
 import os
 
 # initiate logger for CloudWatch
@@ -45,9 +45,9 @@ def lambda_handler(event, context):
     
     print(event)
     client = boto3.client('sns')
-    #TODO update target arn
+    #TODO parameterize hardcoded SNS TargetArn variable
     response = client.publish(
-        TargetArn='arn:aws:sns:us-west-2:730335645199:batch-etl-email',
+        TargetArn='arn:aws:sns:us-west-2:905418049473:dev-fnt-0501651-sns-topic-batch-etl-email',
         Message=json.dumps({'default': json.dumps(event)}),
         MessageStructure='json'
     )

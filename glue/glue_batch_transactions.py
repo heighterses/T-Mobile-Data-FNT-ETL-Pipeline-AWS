@@ -217,7 +217,7 @@ column_headers_drop = ['recordType']
 # Adjust the parameters of pd.read_csv() as needed for your specific file format
 # Read the file into a pandas DataFrame, skipping the first row and the last row
 # Read everything as string, will change data types later
-df = pd.read_csv(BytesIO(file_content), delimiter=',',skiprows=1, skipfooter=1, engine='python', on_bad_lines='skip', names = column_headers_all, dtype=str)
+df = pd.read_csv(io.BytesIO(file_content), delimiter=',',skiprows=1, skipfooter=1, engine='python', on_bad_lines='skip', names = column_headers_all, dtype=str)
 df = df.drop(column_headers_drop, axis=1)
 
 # Define the desired data types for each column
@@ -285,6 +285,7 @@ spark_df.write\
 logger_function("Batch file saved as parquet in stage bucket.", type="info")
 
 # Create json file with job details for subsequent Lambda functions
+# TODO parameterize hardcoded key names
 result = {}
 result['batchType'] = 'Transactions'
 result['batchFileName'] = batch_file_name
@@ -300,8 +301,8 @@ logger_function("Metadate written to stage bucket.", type="info")
 
 # return credentials for connecting to Aurora Postgres
 logger_function("Attempting Aurora Postgres connection...", type="info")
-#TODO update secret name
-credential = get_db_secret(secret_name="auroraPostgres2", region_name="us-west-2")
+#TODO parameterize hardcoded secret name
+credential = get_db_secret(secret_name="rds/dev/fnt", region_name="us-west-2")
 
 # connect to database
 conn = db_connector(credential)

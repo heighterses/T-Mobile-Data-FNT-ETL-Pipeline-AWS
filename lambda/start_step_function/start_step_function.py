@@ -5,7 +5,7 @@ This Lambda function initiates the AWS Step Functions for ETL orchestration
 # packages
 import logging
 import json
-import boto3
+import boto3 # type: ignore
 import os
 import sys
 
@@ -60,7 +60,7 @@ def lambda_handler(event, context):
         logger_function("Sending JSON dump to Step Functions as input: ", type="info")
         logger_function(step_function_input, type="info")
         client = boto3.client('stepfunctions')
-        # TODO update with correct stateMachineArn
+        # TODO parameterize hardcoded step_function_arn
         step_function_arn = 'arn:aws:states:us-west-2:730335645199:stateMachine:dev-fnt-0501651-batch-state-machine'
         response = client.start_execution(stateMachineArn = step_function_arn, input= json.dumps(step_function_input))
     except:

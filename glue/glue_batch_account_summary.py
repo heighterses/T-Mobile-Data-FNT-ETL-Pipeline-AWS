@@ -260,6 +260,7 @@ spark_df.write\
 logger_function("Batch file saved as parquet in stage bucket.", type="info")
 
 # Create json file with job details for subsequent Lambda functions
+# TODO parameterize hardcoded key names
 result = {}
 result['batchType'] = 'Account Summary'
 result['batchFileName'] = batch_file_name
@@ -275,8 +276,8 @@ logger_function("Metadate written to stage bucket.", type="info")
 
 # return credentials for connecting to Aurora Postgres
 logger_function("Attempting Aurora Postgres connection...", type="info")
-#TODO update secret name
-credential = get_db_secret(secret_name="auroraPostgres2", region_name="us-west-2")
+#TODO parameterize hardcoded secret name
+credential = get_db_secret(secret_name="rds/dev/fnt", region_name="us-west-2")
 
 # connect to database
 conn = db_connector(credential)

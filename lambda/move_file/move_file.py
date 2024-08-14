@@ -5,7 +5,7 @@ This Lambda function Moves the source dataset to archive/error folder
 # packages
 import logging
 import json
-import boto3
+import boto3 # type: ignore
 import os
 
 # initiate logger for CloudWatch
@@ -68,5 +68,6 @@ def lambda_handler(event, context):
 
     s3.Object(bucket_name, key_name).delete()
     result['Status'] = status
+    # TODO update with more descriptive error message
     result['msg'] = f"Batch file moved to {location}/{key_name}"
     return(result)

@@ -5,8 +5,8 @@ This Lambda function transfers a batch file from the S3 loading zone to raw buck
 # packages
 import logging
 import json
-import boto3
-from botocore.exceptions import ClientError
+import boto3 # type: ignore
+from botocore.exceptions import ClientError # type: ignore
 import sys
 
 # initiate logger for CloudWatch
@@ -87,8 +87,8 @@ def lambda_handler(event, context):
         file_content = response['Body'].read()
         
         # Write the file to the destination bucket
-        # TODO update with correct bucket name
-        s3.put_object(Bucket='dev-fnt-0501651-batch-raw-sandbox', Key=updated_key_name, Body=file_content)
+        # TODO parameterize hardcoded bucket name
+        s3.put_object(Bucket='dev-fnt-0501651-batch-raw', Key=updated_key_name, Body=file_content)
         
         logger_function("S3 Put Object Completed", type="info")
     except ClientError as e:
