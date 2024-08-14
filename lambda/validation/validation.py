@@ -46,7 +46,7 @@ def contains_keywords(s):
     if 'transaction' in s:
         return 'dev-fnt-0501651-glue-batch-transactions'
     elif 'account' in s:
-        return 'dev-fnt-glue-batch-account-summary'
+        return 'dev-fnt-0501651-glue-batch-account-summary'
     elif 'cardholder' in s:
         return 'dev-fnt-0501651-glue-batch-cardholder'
     elif 'application' in s:
