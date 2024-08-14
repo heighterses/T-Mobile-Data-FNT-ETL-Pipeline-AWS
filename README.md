@@ -82,7 +82,7 @@ Note that future versions of this might be deployed using AWS CloudFormation tem
 * glue - This folder conatins the glue scripts for transforming the raw .dat batch files and compressing as parquet files
 * notebooks - Notebooks for testing and ad hoc analysis
 * sql - Schema for fintech backend
-* roles - AWS execution role JSONs
+* roles_and_policies - AWS execution role JSONs and other pertinent policies
 * state_machine.yml - AWS Step Function code for ETL orchestration object
 
 
