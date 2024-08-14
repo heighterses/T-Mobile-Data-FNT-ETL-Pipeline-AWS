@@ -43,7 +43,7 @@ Note that future versions of this might be deployed using AWS CloudFormation tem
 
 
 ## Product Versions
-* Python 3.9 for AWS Lambda
+* Python 3.10 for AWS Lambda
 * AWS Glue version 3
 * Aurora PostgreSQL 14 (serverless v2 scaling)
 

@@ -4,7 +4,7 @@
   "States": {
     "Validate Batch File": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:us-west-2:730335645199:function:dev-fnt-batch-validate",
+      "Resource": "arn:aws:lambda:us-west-2:905418049473:function:dev-fnt-0501651-lambda-batch-validation",
       "Next": "Validation Success?",
       "ResultPath": "$.taskresult"
     },
@@ -26,14 +26,14 @@
     "FAIL - Move file to error folder": {
       "Type": "Task",
       "Next": "Error Notification",
-      "Resource": "arn:aws:lambda:us-west-2:730335645199:function:dev-fnt-move-file"
+      "Resource": "arn:aws:lambda:us-west-2:905418049473:function:dev-fnt-0501651-lambda-batch-move-file"
     },
     "Error Notification": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:sns:publish",
       "Parameters": {
         "Message.$": "$",
-        "TopicArn": "arn:aws:sns:us-west-2:730335645199:batch-etl-email"
+        "TopicArn": "arn:aws:sns:us-west-2:905418049473:dev-fnt-0501651-sns-topic-batch-etl-email"
       },
       "Next": "Fail"
     },
@@ -70,7 +70,7 @@
     },
     "Move file to archive": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:us-west-2:730335645199:function:dev-fnt-move-file",
+      "Resource": "arn:aws:lambda:us-west-2:905418049473:function:dev-fnt-0501651-lambda-batch-move-file",
       "Next": "Success Notification"
     },
     "Success Notification": {
@@ -78,7 +78,7 @@
       "Resource": "arn:aws:states:::aws-sdk:sns:publish",
       "Parameters": {
         "Message.$": "$",
-        "TopicArn": "arn:aws:sns:us-west-2:730335645199:batch-etl-email"
+        "TopicArn": "arn:aws:sns:us-west-2:905418049473:dev-fnt-0501651-sns-topic-batch-etl-email"
       },
       "End": true
     }
