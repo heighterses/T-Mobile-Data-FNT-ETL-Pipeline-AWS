@@ -60,14 +60,16 @@ def lambda_handler(event, context):
         logger_function("Status is set to failure. Moving to error folder", type="info")
         location = dest_error_bucket_name
         s3.Object(dest_error_bucket_name, key_name).copy_from(CopySource=source_file_name_to_copy)
+        # TODO update with more descriptive error message
+        result['msg'] = f"Batch file moved to {location}/{key_name}"
     # If SUCCESS, move to archive
     elif status == "SUCCESS":
         logger_function("Status is set to archive. Moving to archive folder", type="info")
         location = dest_archive_bucket_name
         s3.Object(dest_archive_bucket_name, key_name).copy_from(CopySource=source_file_name_to_copy)
+        # TODO update with more descriptive error message
+        result['msg'] = f"Batch file uploaded to RDS and moved to {location}/{key_name} in S3."
 
-    s3.Object(bucket_name, key_name).delete()
+    #s3.Object(bucket_name, key_name).delete()
     result['Status'] = status
-    # TODO update with more descriptive error message
-    result['msg'] = f"Batch file moved to {location}/{key_name}"
     return(result)
