@@ -61,7 +61,7 @@ def lambda_handler(event, context):
         logger_function(step_function_input, type="info")
         client = boto3.client('stepfunctions')
         # TODO parameterize hardcoded step_function_arn
-        step_function_arn = 'arn:aws:states:us-west-2:730335645199:stateMachine:dev-fnt-0501651-batch-state-machine'
+        step_function_arn = 'arn:aws:states:us-west-2:905418049473:stateMachine:dev-fnt-0501651-state-machine-batch-etl'
         response = client.start_execution(stateMachineArn = step_function_arn, input= json.dumps(step_function_input))
     except:
         logger_function("ERROR: Could not initiate step functions.", type="error")
