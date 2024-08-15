@@ -1,0 +1,7 @@
+CREATE ROLE readonly;
+GRANT CONNECT ON DATABASE dev_fnt_rds_onboarding_service TO readonly;
+GRANT USAGE ON SCHEMA fnt TO readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA fnt TO readonly;
+ALTER DEFAULT PRIVILEGES IN SCHEMA fnt GRANT SELECT ON TABLES TO readonly;
+
+
