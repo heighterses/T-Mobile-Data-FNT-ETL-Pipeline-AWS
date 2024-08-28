@@ -1,0 +1,14 @@
+{
+    "Version": "2012-10-17",
+        "Statement": [
+        {   
+        "Effect": "Allow",
+        "Action": [
+            "glue:GetTags"
+        ],
+        "Resource": [
+            "arn:aws:glue:us-west-2:905418049473:job/dev-fnt-0501651-glue-batch-account-summary"
+        ]
+        }
+    ]
+}

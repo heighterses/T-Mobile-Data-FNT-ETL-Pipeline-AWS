@@ -71,7 +71,7 @@ def lambda_handler(event, context):
     batch_file_name = event['taskresult']['latestBatchFileName']
     batch_timestamp = event['taskresult']['latestBatchTimestamp']
     # TODO update with correct destination bucket name
-    dest_bucket_name = 'dev-fnt-0501651-batch-stage-sandbox'
+    dest_bucket_name = 'dev-fnt-0501651-batch-stage'
 
     # Use batch file name to determine Glue Job
     job_name = contains_keywords(key_name)

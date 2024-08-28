@@ -78,12 +78,13 @@ def get_db_secret(secret_name, region_name):
 
 
 ###### database connector function ######
-def db_connector(credential):
+def db_connector(credential, dbname):
     """
     This function creates the connection object for Aurora Postgres
 
     Args:
         credential (dict): Dictionary containing secret key:value pairs for database connection
+        dbname (str): Name of database
 
     Returns
         conn (object): Connection object on Aurora Postgres instance
@@ -100,7 +101,8 @@ def db_connector(credential):
         conn = psycopg2.connect(host=rds_host,
                                 user=user_name,
                                 password=password,
-                                port=rds_port)
+                                port=rds_port,
+                                dbname=dbname)
         conn.autocommit = True
         logger_function("SUCCESS: Connection to Aurora Postgres instance succeeded.", type="info")
     except psycopg2.Error as e:
@@ -277,10 +279,11 @@ logger_function("Metadate written to stage bucket.", type="info")
 # return credentials for connecting to Aurora Postgres
 logger_function("Attempting Aurora Postgres connection...", type="info")
 #TODO parameterize hardcoded secret name
-credential = get_db_secret(secret_name="rds/dev/fnt", region_name="us-west-2")
+credential = get_db_secret(secret_name="rds/dev/fnt/batch_user1", region_name="us-west-2")
 
 # connect to database
-conn = db_connector(credential)
+dbname = "dev_fnt_rds_card_account_service"
+conn = db_connector(credential, dbname)
 cursor = conn.cursor()
 
 # (1) create if not exists temp table in RDS (e.g., tbl_temp_cof_account_master)

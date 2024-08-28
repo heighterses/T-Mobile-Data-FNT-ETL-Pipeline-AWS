@@ -42,7 +42,6 @@ def contains_keywords(s):
     
     keywords = ["transaction", "account", "cardholder", "application"]
     
-    # TODO update with correct glue job name
     if 'transaction' in s:
         return 'dev-fnt-0501651-glue-batch-transactions'
     elif 'account' in s:
@@ -169,10 +168,10 @@ def lambda_handler(event, context):
         result['bucket_arn'] = bucket_arn
         result['key_name'] = key_name
         result['job_name'] = job_name
-        #TODO update with correct error bucket name
-        result['error_bucket_name'] = "dev-fnt-0501651-batch-error-sandbox"
-        result['archive_bucket_name'] = "dev-fnt-0501651-batch-stage-archive-sandbox"
-        result['stage_bucket_name'] = "dev-fnt-0501651-batch-stage-sandbox"
+        #TODO parameterize hardcoded bucket name variable
+        result['error_bucket_name'] = "dev-fnt-0501651-batch-error"
+        result['archive_bucket_name'] = "dev-fnt-0501651-batch-archive"
+        result['stage_bucket_name'] = "dev-fnt-0501651-batch-stage"
         result['validation'] = "SUCCESS"
     except:
         result['validation'] = "FAILURE"
