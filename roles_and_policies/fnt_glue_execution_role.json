@@ -113,8 +113,16 @@
         "ec2:CreateTags"
       ],
       "Resource": [
-        "arn:aws:ec2:us-west-2:905418049473:security-group/sg-0201c4abf6561a546"
-      ]
+        "*"
+      ],
+      "Condition": {
+        "ForAllValues:StringNotEquals": {
+          "aws:TagKeys": "Application"
+        },
+        "StringEquals": {
+          "ec2:ResourceTag/Application": "${aws:PrincipalTag/Application}"
+        }
+      }
     },
     {
       "Effect": "Allow",
@@ -127,23 +135,6 @@
       "Condition": {
         "StringEquals": {
           "aws:RequestTag/Application": "${aws:PrincipalTag/Application}"
-        }
-      }
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "ec2:CreateTags"
-      ],
-      "Resource": [
-        "*"
-      ],
-      "Condition": {
-        "ForAllValues:StringNotEquals": {
-          "aws:TagKeys": "Application"
-        },
-        "StringEquals": {
-          "ec2:ResourceTag/Application": "${aws:PrincipalTag/Application}"
         }
       }
     },
@@ -421,7 +412,8 @@
         "secretsmanager:GetSecretValue"
       ],
       "Resource": [
-        "arn:aws:secretsmanager:us-west-2:905418049473:secret:rds/dev/fnt/batch_user1-DGfgUh"
+        "arn:aws:secretsmanager:us-west-2:905418049473:secret:rds/dev/fnt/batch_user1-DGfgUh",
+        "arn:aws:secretsmanager:us-west-2:905418049473:secret:rds/dev/fnt/admin-KIeJiN"
       ]
     },
     {

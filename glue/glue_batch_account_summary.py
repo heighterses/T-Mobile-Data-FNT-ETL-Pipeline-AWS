@@ -128,25 +128,25 @@ def get_temp_table_schema():
         temp_tbl_name (string): Name of temporary table
     """
 
-    temp_tbl_name = "fnt.tbl_temp_cof_account_summary"
+    temp_tbl_name = "fnt.batch_temp_card_account_summary"
     sql0 = """CREATE SCHEMA IF NOT EXISTS fnt;"""
     sql1 =   """
-            CREATE TABLE IF NOT EXISTS fnt.tbl_temp_cof_account_summary(
-                latestBatchTimestamp TEXT,
-                latestBatchFileName TEXT,
-                lastTimestampUpdated TEXT NOT NULL,
-                surrogateAccountId TEXT NOT NULL UNIQUE,
-                nextPaymentDueDate DATE,
-                creditLimit NUMERIC,
-                availableCredit NUMERIC,
-                currentBalance NUMERIC,
-                nextStatementDate DATE,
-                lastPaymentDate DATE,
-                lastPaymentAmount NUMERIC,
-                dateLastUpdated DATE
+            CREATE TABLE IF NOT EXISTS fnt.batch_temp_card_account_summary(
+                latest_batch_timestamp DATE,
+                latest_batch_filename TEXT,
+                last_timestamp_updated TIMESTAMP WITH TIMEZONE NOT NULL,
+                surrogate_account_id TEXT NOT NULL UNIQUE,
+                next_payment_due_Date DATE,
+                credit_limit NUMERIC,
+                available_credit NUMERIC,
+                current_balance NUMERIC,
+                next_statement_date DATE,
+                last_payment_date DATE,
+                last_payment_amount NUMERIC,
+                date_last_updated DATE
             );
             """
-    sql2 =  """DELETE FROM fnt.tbl_temp_cof_account_summary"""
+    sql2 =  """DELETE FROM fnt.batch_temp_card_account_summary"""
 
     return sql0, sql1, sql2, temp_tbl_name
 
@@ -232,10 +232,16 @@ dtype_dict = {
 df = df.astype(dtype_dict)
 logger_function("Batch file data types updated in Dataframe.", type="info")
 
+# Reformat dates to YYYY-MM-DD
+df['NextPaymentDueDate'] = pd.to_datetime(df['NextPaymentDueDate'], format="%Y-%m-%d")
+df['NextStatementDate'] = pd.to_datetime(df['NextStatementDate'], format="%Y-%m-%d")
+df['LastPaymentDate'] = pd.to_datetime(df['LastPaymentDate'], format="%Y-%m-%d")
+df['DateLastUpdated'] = pd.to_datetime(df['DateLastUpdated'], format="%Y-%m-%d")
+
 # Format the current date and time as MM-DD-YYYY HH:MM:SS
 now = datetime.now()
-date_time_str1 = now.strftime("%m-%d-%Y %H:%M:%S")
-date_time_str2 = now.strftime("%m-%d-%Y_%H:%M:%S")
+date_time_str1 = now.strftime("%Y-%m-%d %H:%M:%S")
+date_time_str2 = now.strftime("%Y-%m-%d_%H:%M:%S")
 
 # Add datetime to df
 df.insert(loc=0, column='LastTimestampUpdated', value=date_time_str1)
@@ -304,9 +310,6 @@ with cursor:
         cursor.copy_expert(f"COPY {temp_tbl_name} FROM STDIN (FORMAT 'csv', HEADER false)", buffer)
     except (Exception, psycopg2.DatabaseError) as error:
         logger_function("Error: %s" % error, type="error")
-
-# (4) TODO move temp table data to "operational table":
-#options are using Lambda (bad), using Postgres trigger (better), step functions, glue, etc. (best)
 
 # closing the connection
 cursor.close()
