@@ -46,7 +46,7 @@ aws rds create-db-cluster \
             ] \
     --enable-cloudwatch-logs-exports postgresql \
     --engine-mode provisioned \
-    --serverless-v2-scaling-configuration {"MinCapacity": integer,"MaxCapacity": integer} \
+    --serverless-v2-scaling-configuration {"MinCapacity": 0.5,"MaxCapacity": 16.0} \
     --copy-tags-to-snapshot \
     --allocated-storage 1 \
     --auto-minor-version-upgrade \
