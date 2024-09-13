@@ -1,15 +1,10 @@
-aws rds create-db-cluster \
-    --availability-zones us-west-2a us-west-2b us-west-2c \
-    --database-name ilab02_fnt_aurora_postgres_1 \
-    --db-cluster-identifier ilab02-fnt-rds-operational-db-cluster \
-    --db-cluster-parameter-group-name fnt-tmo-aurora-postgresql14 \
-    --vpc-security-group-ids sg-0201c4abf6561a546 \
-    --db-subnet-group-name ilab02-fnt-rds-subnet-group \
+aws rds create-db-instance \
+    --db-name ilab02_fnt_aurora_postgres_1 \
+    --db-instance-identifier ilab02-fnt-rds-operational-db-writer \
+    --db-instance-class db.serverless \
     --engine aurora-postgresql \
-    --engine-version 14.9 \
-    --port 5432 \
-    --master-username postgres \
-    --master-user-password newpassword \
+    --db-subnet-group-name ilab02-fnt-rds-subnet-group \
+    --db-parameter-group-name fnt-tmo-aurora-postgresql14-parameter-group \
     --tags [
                 {
                     "Key": "Role",
@@ -33,7 +28,7 @@ aws rds create-db-cluster \
                 },
                 {
                     "Key": "Name",
-                    "Value": "ilab02-fnt-aurora-postgres-1"
+                    "Value": "ilab02-fnt-rds-operational-db-writer"
                 },
                 {
                     "Key": "Stack",
@@ -44,9 +39,6 @@ aws rds create-db-cluster \
                     "Value": "Fintech Card"
                 }
             ] \
-    --enable-cloudwatch-logs-exports postgresql \
-    --engine-mode provisioned \
-    --serverless-v2-scaling-configuration {"MinCapacity": 0.5,"MaxCapacity": 16.0} \
+    --db-cluster-identifier ilab02-fnt-rds-operational-db-cluster \
     --copy-tags-to-snapshot \
-    --ca-certificate-identifier rds-ca-rsa2048-g1 \
-    --network-type IPV4
+    --ca-certificate-identifier rds-ca-rsa2048-g1
