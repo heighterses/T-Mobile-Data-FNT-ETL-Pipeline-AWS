@@ -1,10 +1,10 @@
 aws rds create-db-cluster \
     --availability-zones us-west-2a us-west-2b us-west-2c \
-    --database-name ilab_fnt_aurora_postgres_1 \
-    --db-cluster-identifier ilab-fnt-rds-operational-db-cluster \
+    --database-name ilab02_fnt_aurora_postgres_1 \
+    --db-cluster-identifier ilab02-fnt-rds-operational-db-cluster \
     --db-cluster-parameter-group-name fnt-tmo-aurora-postgresql14 \
     --vpc-security-group-ids sg-0201c4abf6561a546 \
-    --db-subnet-group-name ilab-fnt-rds-subnet-group \
+    --db-subnet-group-name ilab02-fnt-rds-subnet-group \
     --engine aurora-postgresql \
     --engine-version 14.9 \
     --port 5432 \
@@ -33,7 +33,7 @@ aws rds create-db-cluster \
                 },
                 {
                     "Key": "Name",
-                    "Value": "ilab-fnt-aurora-postgres-1"
+                    "Value": "ilab02-fnt-aurora-postgres-1"
                 },
                 {
                     "Key": "Stack",
