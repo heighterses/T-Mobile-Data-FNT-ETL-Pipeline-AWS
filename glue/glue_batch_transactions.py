@@ -324,6 +324,10 @@ buffer.seek(0)
 with cursor:
     try:
         cursor.copy_expert(f"COPY {temp_tbl_name} FROM STDIN (FORMAT 'csv', HEADER false)", buffer)
+
+        # Trigger upsert stored procedure
+        cursor.execute("CALL upsert_dummy__transaction();")
+        conn.commit()
     except (Exception, psycopg2.DatabaseError) as error:
         logger_function("Error: %s" % error, type="error")
 

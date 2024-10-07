@@ -132,10 +132,10 @@ def get_temp_table_schema():
     sql0 = """CREATE SCHEMA IF NOT EXISTS fnt;"""
     sql1 =   """
             CREATE TABLE IF NOT EXISTS fnt.batch_temp_card_account_summary(
-                latest_batch_timestamp DATE,
+                latest_batch_timestamp timestamptz,
                 latest_batch_filename TEXT,
-                last_timestamp_updated TIMESTAMP WITH TIMEZONE NOT NULL,
-                surrogate_account_id TEXT NOT NULL UNIQUE,
+                last_timestamp_updated timestamptz NOT NULL,
+                cof_account_surrogate_id  TEXT NOT NULL PRIMARY KEY,
                 next_payment_due_Date DATE,
                 credit_limit NUMERIC,
                 available_credit NUMERIC,
@@ -143,12 +143,74 @@ def get_temp_table_schema():
                 next_statement_date DATE,
                 last_payment_date DATE,
                 last_payment_amount NUMERIC,
-                date_last_updated DATE
+                date_last_updated DATE,
+                billing_cycle_day INTEGER
             );
             """
     sql2 =  """DELETE FROM fnt.batch_temp_card_account_summary"""
 
     return sql0, sql1, sql2, temp_tbl_name
+
+###### procedure creation function ######
+def create_upsert_procedure(cursor):
+    """
+    This function creates a stored procedure in PostgreSQL for upserting data 
+    into the dummy_card_account_summary table.
+
+    Args:
+        cursor (object): Database cursor to execute SQL commands
+    """
+    # Define the SQL for creating the stored procedure
+    sql_procedure = """
+    CREATE OR REPLACE PROCEDURE upsert_dummy_card_account_summary()
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+        -- Perform the upsert operation from the temporary table to the operational table
+        INSERT INTO dummy_card_account_summary (
+            tmo_uuid, 
+            cof_account_surrogate_id, 
+            next_payment_due_date, 
+            credit_limit, 
+            available_credit, 
+            current_balance, 
+            statement_date, 
+            last_payment_date, 
+            last_payment_amount, 
+            updated_timestamp
+        )
+        SELECT 
+             'default_tmo_uuid',  -- Default value for tmo_uuid since it's not nullable and not present in temp table
+             cof_account_surrogate_id, 
+             next_payment_due_date, 
+             credit_limit, 
+             available_credit, 
+             current_balance, 
+             next_statement_date, 
+             last_payment_date, 
+             last_payment_amount, 
+             latest_batch_timestamp
+        FROM 
+            batch_temp_card_account_summary temp
+        ON CONFLICT (cof_account_surrogate_id) 
+        DO UPDATE 
+        SET 
+            next_payment_due_date = EXCLUDED.next_payment_due_date,
+            credit_limit = EXCLUDED.credit_limit,
+            available_credit = EXCLUDED.available_credit,
+            current_balance = EXCLUDED.current_balance,
+            statement_date = EXCLUDED.statement_date,
+            last_payment_date = EXCLUDED.last_payment_date,
+            last_payment_amount = EXCLUDED.last_payment_amount,
+            updated_timestamp = EXCLUDED.updated_timestamp
+        WHERE public.dummy_card_account_summary.updated_timestamp < EXCLUDED.updated_timestamp;
+
+        RAISE NOTICE 'UPSERT operation completed successfully.';
+    EXCEPTION
+        WHEN OTHERS THEN
+            RAISE EXCEPTION 'Error during UPSERT operation: %', SQLERRM;
+    END $$;
+    """
 
 ###############################################################################
 ###############################################################################
@@ -191,7 +253,7 @@ file_content = response['Body'].read()
 # Assign column headers based on known schema
 column_headers_all = ['RecordType','brand','SurrogateAccountID','Privacymail', 'PrivacyDateMail','PrivacyEmail','PrivacyDateEmail','PrivacyPhone',
                   'PrivacyDatePhone','GLBFlag','Cardscheme','AccountType','BankruptcyIndicator',
-                  'AccountClosedIndicator','AccountClosedReason','FraudIndicator','HardshipIndicator',
+                  'AccountClosedIndicator','AccountClosedReason','FraudIndicator','HardshipIndicator',+
                   'DeceasedIndicator','SoldIndicator','ChargeoffIndicator','PotentialFraudIndicator',
                   'LostStolenIndicator','BadAddressFlag','PaymentCycleDue','AccountOpenState',
                   'WaiveInterest','WaiveLateFees','NumberofLTDNSFOccurrences','NumberofDisputedTransactions',
@@ -300,6 +362,9 @@ cursor.execute(sql1)
 # (2) whether we create a new table or not, need to remove all records as it should be empty
 cursor.execute(sql2)
 
+# Call the function to create the stored procedure
+create_upsert_procedure(cursor)
+
 # (3) upload dataframe into sql table
 #TODO use pyspark
 buffer = io.StringIO()
@@ -308,6 +373,10 @@ buffer.seek(0)
 with cursor:
     try:
         cursor.copy_expert(f"COPY {temp_tbl_name} FROM STDIN (FORMAT 'csv', HEADER false)", buffer)
+
+        # Trigger upsert stored procedure
+        cursor.execute("CALL upsert_dummy_card_account_summary();")
+        conn.commit()
     except (Exception, psycopg2.DatabaseError) as error:
         logger_function("Error: %s" % error, type="error")
 
