@@ -112,8 +112,8 @@ def db_connector(credential, dbname):
 
     # return connection object
     return conn
-
-
+    
+    
 ###### temp table function ######
 def get_temp_table_schema():
     """
@@ -128,13 +128,13 @@ def get_temp_table_schema():
         temp_tbl_name (string): Name of temporary table
     """
 
-    temp_tbl_name = "fnt.batch_temp_card_account_summary"
-    sql0 = """CREATE SCHEMA IF NOT EXISTS fnt;"""
+    temp_tbl_name = "ETLTest.batch_temp_card_account_summary"
+    sql0 = """CREATE SCHEMA IF NOT EXISTS ETLTest;"""
     sql1 =   """
-            CREATE TABLE IF NOT EXISTS fnt.batch_temp_card_account_summary(
+            CREATE TABLE IF NOT EXISTS ETLTest.batch_temp_card_account_summary(
                 latest_batch_timestamp timestamptz,
                 latest_batch_filename TEXT,
-                last_timestamp_updated timestamptz NOT NULL,
+                last_updated_timestamp timestamptz NOT NULL,
                 cof_account_surrogate_id  TEXT NOT NULL PRIMARY KEY,
                 next_payment_due_Date DATE,
                 credit_limit NUMERIC,
@@ -147,7 +147,7 @@ def get_temp_table_schema():
                 billing_cycle_day INTEGER
             );
             """
-    sql2 =  """DELETE FROM fnt.batch_temp_card_account_summary"""
+    sql2 =  """DELETE FROM ETLTest.batch_temp_card_account_summary"""
 
     return sql0, sql1, sql2, temp_tbl_name
 
@@ -162,12 +162,12 @@ def create_upsert_procedure(cursor):
     """
     # Define the SQL for creating the stored procedure
     sql_procedure = """
-    CREATE OR REPLACE PROCEDURE upsert_dummy_card_account_summary()
+    CREATE OR REPLACE PROCEDURE upsert_temp_to_dummy_card_account_summary()
     LANGUAGE plpgsql
     AS $$
     BEGIN
         -- Perform the upsert operation from the temporary table to the operational table
-        INSERT INTO dummy_card_account_summary (
+        INSERT INTO ETLTest.dummy_card_account_summary (
             tmo_uuid, 
             cof_account_surrogate_id, 
             next_payment_due_date, 
@@ -176,12 +176,13 @@ def create_upsert_procedure(cursor):
             current_balance, 
             statement_date, 
             last_payment_date, 
-            last_payment_amount, 
+            last_payment_amount,
+            created_timestamp,
             updated_timestamp
         )
         SELECT 
-             'default_tmo_uuid',  -- Default value for tmo_uuid since it's not nullable and not present in temp table
-             cof_account_surrogate_id, 
+             cof_account_surrogate_id,  -- Insert cof_account_surrogate_id into tmo_uuid
+             cof_account_surrogate_id,  -- Insert cof_account_surrogate_id into cof_account_surrogate_id
              next_payment_due_date, 
              credit_limit, 
              available_credit, 
@@ -189,9 +190,11 @@ def create_upsert_procedure(cursor):
              next_statement_date, 
              last_payment_date, 
              last_payment_amount, 
-             latest_batch_timestamp
+             latest_batch_timestamp,
+             last_updated_timestamp
+             
         FROM 
-            batch_temp_card_account_summary temp
+            ETLTest.batch_temp_card_account_summary temp
         ON CONFLICT (cof_account_surrogate_id) 
         DO UPDATE 
         SET 
@@ -203,7 +206,7 @@ def create_upsert_procedure(cursor):
             last_payment_date = EXCLUDED.last_payment_date,
             last_payment_amount = EXCLUDED.last_payment_amount,
             updated_timestamp = EXCLUDED.updated_timestamp
-        WHERE public.dummy_card_account_summary.updated_timestamp < EXCLUDED.updated_timestamp;
+        WHERE ETLTest.dummy_card_account_summary.updated_timestamp < EXCLUDED.updated_timestamp;
 
         RAISE NOTICE 'UPSERT operation completed successfully.';
     EXCEPTION
@@ -211,6 +214,87 @@ def create_upsert_procedure(cursor):
             RAISE EXCEPTION 'Error during UPSERT operation: %', SQLERRM;
     END $$;
     """
+    # Execute the SQL query to create the stored procedure
+    cursor.execute(sql_procedure)
+
+###### function vlaidtes prosessed data row by row and rejects the rows which fail validation ######
+def validate_row(row):
+    """
+    Validates a row of data and returns a boolean indicating success or failure,
+    along with a rejection reason if applicable.
+
+    Args:
+        row (dict): Row data from DataFrame.
+
+    Returns:
+        is_valid (bool): Whether the row is valid.
+        rejection_reason (str): Reason for rejection if row is invalid.
+    """
+    # Check latest_batch_timestamp
+    if pd.isnull(row['latest_batch_timestamp']):
+        return False, "Missing or invalid latest_batch_timestamp"
+
+    # Check latest_batch_filename
+    if not row['latest_batch_filename']:
+        return False, "Missing latest_batch_filename"
+
+    # Check last_timestamp_updated
+    if pd.isnull(row['last_timestamp_updated']):
+        return False, "Missing last_timestamp_updated"
+
+    # Check cof_account_surrogate_id (Primary Key)
+    if not row['cof_account_surrogate_id']:
+        return False, "Missing cof_account_surrogate_id (Primary Key)"
+
+    # Check next_payment_due_date
+    if pd.isnull(row['next_payment_due_date']):
+        return False, "Missing next_payment_due_date"
+    elif row['next_payment_due_date'] < pd.Timestamp.now():
+        return False, "Invalid next_payment_due_date (cannot be in the past)"
+
+    # Check credit_limit
+    if pd.isnull(row['credit_limit']) or row['credit_limit'] < 0:
+        return False, "Missing or invalid credit_limit"
+
+    # Check available_credit
+    if pd.isnull(row['available_credit']):
+        return False, "Missing available_credit"
+    elif row['available_credit'] < 0:
+        return False, "Invalid available_credit (cannot be negative)"
+    elif row['available_credit'] > row['credit_limit']:
+        return False, "Invalid available_credit (cannot exceed credit limit)"
+
+    # Check current_balance
+    if pd.isnull(row['current_balance']) or row['current_balance'] < 0:
+        return False, "Missing or invalid current_balance"
+
+    # Check next_statement_date
+    if pd.isnull(row['next_statement_date']):
+        return False, "Missing next_statement_date"
+    elif row['next_statement_date'] < pd.Timestamp.now():
+        return False, "Invalid next_statement_date (cannot be in the past)"
+
+    # Check last_payment_date
+    if pd.isnull(row['last_payment_date']):
+        return False, "Missing last_payment_date"
+    elif row['last_payment_date'] > pd.Timestamp.now():
+        return False, "Invalid last_payment_date (cannot be in the future)"
+
+    # Check last_payment_amount
+    if pd.isnull(row['last_payment_amount']) or row['last_payment_amount'] < 0:
+        return False, "Missing or invalid last_payment_amount"
+
+    # Check date_last_updated
+    if pd.isnull(row['date_last_updated']):
+        return False, "Missing date_last_updated"
+    elif row['date_last_updated'] > pd.Timestamp.now():
+        return False, "Invalid date_last_updated (cannot be in the future)"
+
+    # Check billing_cycle_day
+    if pd.isnull(row['billing_cycle_day']) or not (1 <= row['billing_cycle_day'] <= 31):
+        return False, "Invalid billing_cycle_day (should be between 1 and 31)"
+
+    return True, None
 
 ###############################################################################
 ###############################################################################
@@ -269,14 +353,14 @@ column_headers_all = ['RecordType','brand','SurrogateAccountID','Privacymail', '
                   'FirstAuthorizationDate','FirstTransactionDate','NextStatementDate','LanguageIndicator','EarlyLossMitigation','ActivityOpenIndicator','PaperlessStatementIndicator','AccountClosedDate','ProductIdentifier','ProductName']
 
 column_headers_keep = ['SurrogateAccountID','NextPaymentDueDate', 'CreditLimit', 'AvailableCredit',
-                       'CurrentBalance', 'NextStatementDate', 'LastPaymentDate', 'LastPaymentAmount', 'DateLastUpdated']
+                       'CurrentBalance', 'NextStatementDate', 'LastPaymentDate', 'LastPaymentAmount', 'DateLastUpdated', 'BillingCycleDay']
 
 # Assuming the .dat file is a CSV-like format, read it into a pandas DataFrame
 # Adjust the parameters of pd.read_csv() as needed for your specific file format
 # Read the file into a pandas DataFrame, skipping the first row and the last row
 # Read everything as string, will change data types later
 logger_function("Attempting to read batch file...", type="info")
-df = pd.read_csv(io.BytesIO(file_content), delimiter=',',skiprows=1, skipfooter=1, engine='python', on_bad_lines='skip', names = column_headers_all, dtype=str)
+df = pd.read_csv(io.BytesIO(file_content), delimiter='|',skiprows=1, skipfooter=1, engine='python', on_bad_lines='skip', names = column_headers_all, dtype=str)
 df = df[column_headers_keep]
 
 # Define the desired data types for each column
@@ -289,30 +373,30 @@ dtype_dict = {
     'NextStatementDate':str,
     'LastPaymentDate':str,
     'LastPaymentAmount':float,
-    'DateLastUpdated':str
+    'DateLastUpdated':str,
+    'BillingCycleDay':int
 }
 df = df.astype(dtype_dict)
 logger_function("Batch file data types updated in Dataframe.", type="info")
 
 # Reformat dates to YYYY-MM-DD
-df['NextPaymentDueDate'] = pd.to_datetime(df['NextPaymentDueDate'], format="%Y-%m-%d")
-df['NextStatementDate'] = pd.to_datetime(df['NextStatementDate'], format="%Y-%m-%d")
-df['LastPaymentDate'] = pd.to_datetime(df['LastPaymentDate'], format="%Y-%m-%d")
-df['DateLastUpdated'] = pd.to_datetime(df['DateLastUpdated'], format="%Y-%m-%d")
+df['NextPaymentDueDate'] = pd.to_datetime(df['NextPaymentDueDate'], format="%Y%m%d")
+df['NextStatementDate'] = pd.to_datetime(df['NextStatementDate'], format="%Y%m%d")
+df['LastPaymentDate'] = pd.to_datetime(df['LastPaymentDate'], format="%Y%m%d")
+df['DateLastUpdated'] = pd.to_datetime(df['DateLastUpdated'], format="%Y%m%d")
 
 # Format the current date and time as MM-DD-YYYY HH:MM:SS
 now = datetime.now()
-date_time_str1 = now.strftime("%Y-%m-%d %H:%M:%S")
-date_time_str2 = now.strftime("%Y-%m-%d_%H:%M:%S")
+date_time_str1 = now.strftime("%m-%d-%Y %H:%M:%S")
+date_time_str2 = now.strftime("%m-%d-%Y_%H:%M:%S")
 
-# Add datetime to df
-df.insert(loc=0, column='LastTimestampUpdated', value=date_time_str1)
-
-# Add latestBatchTimestamp and latestBatchFileName to df
-df.insert(loc=0, column='LatestBatchTimestamp', value=batch_timestamp)
+batch_timestamp = pd.to_datetime(batch_timestamp, format="%Y%m%d%H%M%S")
+# Add batch_timestamp and latestBatchFileName to df
+df.insert(loc=0, column='LastUpdatedTimestamp', value=batch_timestamp)
 df.insert(loc=0, column='LatestBatchFileName', value=batch_file_name)
+df.insert(loc=0, column='LatestBatchTimestamp', value=batch_timestamp)
 
-# format as parquet and save to s3
+# # format as parquet and save to s3
 extension = ".parquet"
 s3_prefix = "s3://"
 new_file_name = f"{s3_prefix}{dest_bucket}/cof-account-master/cof_staged_account_master_{date_time_str2}.{extension}"
@@ -321,13 +405,17 @@ new_file_name = f"{s3_prefix}{dest_bucket}/cof-account-master/cof_staged_account
 spark_df = spark.createDataFrame(df)
 
 # Write the dataframe to the specified S3 path in CSV format
-spark_df.write\
-     .format("parquet")\
-     .option("quote", None)\
-     .option("header", "true")\
-     .mode("append")\
-     .save(new_file_name)
-logger_function("Batch file saved as parquet in stage bucket.", type="info")
+try:
+    spark_df.write\
+         .format("parquet")\
+         .option("quote", None)\
+         .option("header", "true")\
+         .mode("append")\
+         .save(new_file_name)
+    logger_function("Batch file saved as parquet in stage bucket.", type="info")
+except Exception as e:
+    raise
+    
 
 # Create json file with job details for subsequent Lambda functions
 # TODO parameterize hardcoded key names
@@ -347,7 +435,7 @@ logger_function("Metadate written to stage bucket.", type="info")
 # return credentials for connecting to Aurora Postgres
 logger_function("Attempting Aurora Postgres connection...", type="info")
 #TODO parameterize hardcoded secret name
-credential = get_db_secret(secret_name="rds/dev/fnt/batch_user1", region_name="us-west-2")
+credential = get_db_secret(secret_name="rds/dev/fnt/admin", region_name="us-west-2")
 
 # connect to database
 dbname = "dev_fnt_rds_card_account_service"
@@ -363,22 +451,47 @@ cursor.execute(sql1)
 cursor.execute(sql2)
 
 # Call the function to create the stored procedure
-create_upsert_procedure(cursor)
+try:
+    create_upsert_procedure(cursor)
+except Exception as e:
+    logger_function("stored procedure creation for upsert failed", type="error")
 
 # (3) upload dataframe into sql table
 #TODO use pyspark
-buffer = io.StringIO()
-df.to_csv(buffer, index=False, header=False)
+try:
+    buffer = io.StringIO()
+    
+    df.to_csv(buffer, index=False, header=False)
+except Exception as e:
+    logger_function("writing df to csv failed", type="error")
+
+# Initialize lists to keep track of processed and rejected rows
+processed_rows = []
+rejected_rows = []
+
+for index, row in df.iterrows():
+    is_valid, rejection_reason = validate_row(row)
+    row_json = row.to_json()  # Convert row to JSON format
+
+    if is_valid:
+        # Add to processed list
+        processed_rows.append((batch_file_name, row_json))
+    else:
+        # Add to rejected list with rejection reason
+        rejected_rows.append((batch_file_name, row_json, rejection_reason))
+
 buffer.seek(0)
 with cursor:
     try:
         cursor.copy_expert(f"COPY {temp_tbl_name} FROM STDIN (FORMAT 'csv', HEADER false)", buffer)
-
         # Trigger upsert stored procedure
-        cursor.execute("CALL upsert_dummy_card_account_summary();")
+        cursor.execute("CALL upsert_temp_to_dummy_card_account_summary();")
         conn.commit()
     except (Exception, psycopg2.DatabaseError) as error:
         logger_function("Error: %s" % error, type="error")
+
+# (4) TODO move temp table data to "operational table":
+#options are using Lambda (bad), using Postgres trigger (better), step functions, glue, etc. (best)
 
 # closing the connection
 cursor.close()
