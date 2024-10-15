@@ -12,6 +12,7 @@ from io import BytesIO
 import logging
 import io
 import csv
+import re
 
 # initiate logger for CloudWatch
 logger = logging.getLogger()
@@ -22,7 +23,6 @@ logger.setLevel(logging.INFO)
 def logger_function(message, type="info"):
     """
     Helper function for providing logger messages for CloudWatch
-
     Args:
         message (string): The message to display
         type (string): Either "info" or "error"
@@ -60,54 +60,24 @@ def contains_keywords(s):
         return 'error'
 
 
-###### file name part function ######
-def get_file_name_part(file_name):
-    """
-    Helper function for searching substring
-
-    Args:
-        file_name (string): The batch file name
-
-    Returns:
-        file_name_part (string): The batch file name part to key on
-    """
-
-    if 'transaction' in file_name:
-        file_name_part = "TRAN."
-    elif 'account' in file_name:
-        file_name_part = "ACCT."
-    elif 'cardholder' in file_name:
-        file_name_part = "CARD."
-    elif 'application' in file_name:
-        file_name_part = None
-    else:
-        file_name_part = None
-
-    return file_name_part
-
-
 ###### schema function ######
 def get_schema(file_name, bucket_name, schema_folder):
     """
     Helper function to fetch and return the schema from S3 based on the batch file name.
-
     Args:
         file_name (string): The batch file name to match schema (e.g., 'account', 'transaction')
         bucket_name (string): The S3 bucket where schemas are stored
         schema_folder (string): The folder path in S3 where schemas are located
-
     Returns:
         schema (list): The schema loaded from the corresponding CSV file
     """
-    to_datetime = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ")
-    to_date = lambda d: datetime.strptime(d, '%Y-%m-%d')
 
     s3 = boto3.client('s3')
 
     # Define the schema file path based on the file type in the batch file name
     if 'transaction' in file_name:
         schema_key = f"{schema_folder}/transaction_schema.csv"
-    elif 'account' in file_name:
+    elif 'DailyAccountMaster' in file_name:
         schema_key = f"{schema_folder}/account_schema.csv"
     elif 'cardholder' in file_name:
         schema_key = f"{schema_folder}/cardholder_schema.csv"
@@ -130,21 +100,12 @@ def get_schema(file_name, bucket_name, schema_folder):
             field_name = row['field_name']
             schema_row = {}
             schema_row[field_name] = {
-                'required': row['required'],
                 'nullable': row['nullable'],
                 'type': row['datatype'],
                 'date_conversion': row['date_conversion'],
                 'default': row['default']
             }
 
-            # validate If the field is a date or datetime, 
-            if row['datatype'] == 'datetime':
-                schema_row[field_name]['validate'] = lambda value: to_datetime(value)
-            elif row['datatype'] == 'date':
-                schema_row[field_name]['validate'] = lambda value: to_date(value)
-            else:
-                # If it's not a date or datetime, no validation is added
-                schema_row[field_name]['validate'] = lambda value: value  # No validation, pass the value as-is
             schema.append(schema_row)
 
         return schema
@@ -154,207 +115,239 @@ def get_schema(file_name, bucket_name, schema_folder):
         return []
 
 
-def validate_column_headers(source_headers, schema_fields):
+# Function to validate records based on the schema and batch file
+def validate_records(df_source, schema):
     """
-    Validates if the column headers in the batch file match the schema.
-
+    Validate only 10 records in the batch file based on the schema.
+    
     Args:
-        source_headers (list): List of header columns from the batch file.
-        schema_fields (list): List of expected field names from the schema.
-
+        df_source (DataFrame): The batch file loaded as a DataFrame.
+        schema (list): The schema loaded from the schema CSV file.
+    
     Returns:
-        bool: True if headers match, False otherwise.
-        errors (list): List of errors if headers do not match.
+        all_errors (list): A list of validation error messages across all records.
     """
-    errors = []
-
-    # Check if all schema field names are in the batch file headers
-    for field in schema_fields:
-        if field not in source_headers:
-            errors.append(f"Missing field in batch file: {field}")
-
-    # Check if there are extra fields in the batch file not in schema
-    for field in source_headers:
-        if field not in schema_fields:
-            errors.append(f"Unexpected field in batch file: {field}")
-
-    if errors:
-        return False, errors
-    else:
-        return True, []
-
-
-def validate_records(df_records, schema):
-    """
-    Validates the first 10 records in the batch file against the schema.
-
-    Args:
-        df_records (DataFrame): DataFrame containing batch file records.
-        schema (list): List of dictionaries containing schema definitions.
-
-    Returns:
-        bool: True if records match the schema, False otherwise.
-        errors (list): List of validation errors if records do not match.
-    """
-    errors = []
-
-    # Convert schema list into a dictionary for easier lookups
+    # Prepare schema dictionary for validation
     schema_dict = {}
-    for field_schema in schema:
+    for index, field_schema in enumerate(schema):
         for field_name, field_properties in field_schema.items():
-            schema_dict[field_name] = field_properties
+            schema_dict[index] = field_properties  # Use index as the key
 
-    # Check the first 10 records
-    for index, record in df_records.iterrows():
-        if index >= 10:
-            break  # Only validate the first 10 records
+    # Validate records and collect errors
+    all_errors = []
+    for record_index, record in df_source.iterrows():
+        if record_index > 9:  # Validate first 10 records
+            break
+        errors = validate_record(record, record_index, schema_dict)
+        all_errors.extend(errors)  # Collect all errors from each record
 
-        for field, value in record.items():
-            if field in schema_dict:
-                field_schema = schema_dict[field]
+    return all_errors
+    
+def validate_record(record, record_index, schema_dict):
+    """
+    Validate a single record based on the schema.
+    
+    Args:
+        record (Series): The record values as a pandas Series.
+        record_index (int): The index of the record being processed.
+        schema_dict (dict): The schema dictionary that contains field types and validation rules.
 
-                # Check if the field is required and missing
-                if field_schema['required'] == 'Yes' and pd.isnull(value):
-                    errors.append(f"Record {index + 1}: {field} is required but missing.")
+    Returns:
+        errors (list): A list of validation error messages for this record.
+    """
+    errors = []
 
-                # Check data type
-                expected_type = field_schema['type']
+    # Lambda functions for date and datetime parsing
+    to_datetime = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ")
+    to_date = lambda d: datetime.strptime(d, '%Y-%m-%d')
 
-                # Validate 'text' as string
-                if expected_type == 'text' and not isinstance(value, str):
-                    errors.append(f"Record {index + 1}: {field} should be a Text (String).")
+    for index, value in enumerate(record):
+        if index in schema_dict:
+            field_schema = schema_dict[index]
+            expected_type = field_schema['type']
+            nullable = field_schema['nullable']
+            
+            # Check for empty or null values and skip validation if nullable is True
+            if pd.isna(value) or str(value).strip() == '':
+                if nullable.lower() == 'true':
+                    continue  # Skip further validation if the field is nullable
+                else:
+                    # If nullable is false, add error
+                    errors.append(f"Record {record_index + 1}: Field {index + 1} cannot be null or empty.")
+                    continue
 
-                # Validate 'numeric' as integer or float
-                elif expected_type == 'numeric' and not (isinstance(value, int) or isinstance(value, float)):
-                    errors.append(f"Record {index + 1}: {field} should be a Numeric (Integer or Float).")
-
-                # Validate 'date' as a valid date
-                elif expected_type == 'date':
+            # Perform validation only if the value is non-null
+            if value:
+                if expected_type in ['Small Char', 'Medium Char', 'Long Char'] and not isinstance(value, str):
+                    errors.append(f"Record {record_index + 1}: Field {index + 1} should be a Text (String).")
+                
+                elif expected_type == 'Date':
+                    # Convert date if in the form YYYYMMDD to YYYY-MM-DD
+                    if len(value) == 8 and value.isdigit():
+                        value = f"{value[:4]}-{value[4:6]}-{value[6:]}"
+                    
+                    # Now validate using the to_date function
                     try:
-                        pd.to_datetime(value, format='%Y-%m-%d', errors='raise')
-                    except (ValueError, TypeError):
-                        errors.append(f"Record {index + 1}: {field} should be a valid Date (YYYY-MM-DD).")
+                        to_date(value)  # Use the custom to_date function for validation
+                    except ValueError:
+                        errors.append(f"Record {record_index + 1}: Field {index + 1} should be a valid Date (YYYY-MM-DD).")
 
-                # Validate 'timestamptz' as timestamp with timezone
                 elif expected_type == 'timestamptz':
                     try:
-                        pd.to_datetime(value, utc=True, errors='raise')
-                    except (ValueError, TypeError):
-                        errors.append(f"Record {index + 1}: {field} should be a valid Timestamp with Timezone (timestamptz).")
+                        to_datetime(value)  # Use the custom to_datetime function for validation
+                    except ValueError:
+                        errors.append(f"Record {record_index + 1}: Field {index + 1} should be a valid Timestamp with Timezone (timestamptz).")
 
-    if errors:
-        return False, errors
-    else:
-        return True, []
-
+    return errors
 
 ###### lambda primary function ######
 def lambda_handler(event, context):
     """
-    This function validates batch file schema
-
+    This function validates batch file schema and records and sends results to the step function.
     Args:
-        event (object): Event data that's passed to the function upon execution
-        context (object): Python objects that implements methods and has attributes
-
+        event (object): Event data passed to the function upon execution
+        context (object): Lambda context object
     Returns:
-        NONE
+        result (dict): Result dictionary containing validation status and other metadata
     """
+    
+    # Initialize the result dictionary at the beginning of the function
+    result = {
+        'validation': "UNKNOWN",  # Default value to indicate unknown status
+        'reason': "",
+        'location': ""
+    }
+    
     try:
         # S3 object
         s3 = boto3.client('s3')
 
         # Event is result object from previous step
-        key_name = event['key_name']
-        bucket_name = event['bucket_name']
-        bucket_arn = event['bucket_arn']
-        file_name = event['file_name']
-        schema_bucket = event['schema_bucket']
-        schema_folder = event['schema_folder']
+        key_name = event.get('source_key_name', "")
+        bucket_name = event.get('source_bucket_name', "")
+        bucket_arn = event.get('source_bucket_arn', "")
+        file_name = event.get('batch_file_name', "")
+        schema_bucket = event.get('schema_bucket_name', "")
+        schema_folder = event.get('schema_folder', "")
 
-        logger_function(f"""Source Bucket Name: {bucket_name}""", type="info")
-        logger_function(f"""Batch File Name: {key_name}""", type="info")
-
-        # Get schema
-        schema = get_schema(file_name=file_name,
-                            bucket_name=schema_bucket,
-                            schema_folder=schema_folder)
-
-        # Read the file from the source bucket
-        response = s3.get_object(Bucket=bucket_name, Key=key_name)
-        file_content = response['Body'].read()
+        logger_function(f"Source Bucket Name: {bucket_name}", type="info")
+        logger_function(f"Batch File Name: {file_name}", type="info")
+        logger_function(f"schema bucket name: {schema_bucket}", type='info')
 
         # Look in file name to key on what batch file it is, return aws glue job name
-        job_name = contains_keywords(key_name)
+        job_name = contains_keywords(file_name)
 
         # Create result object to move to next step
-        result = {}
-        result['bucket_name'] = bucket_name
-        result['bucket_arn'] = bucket_arn
-        result['key_name'] = key_name
-        result['job_name'] = job_name
-        result['error_bucket_name'] = "dev-fnt-0501651-batch-error"
-        result['archive_bucket_name'] = "dev-fnt-0501651-batch-archive"
-        result['stage_bucket_name'] = "dev-fnt-0501651-batch-stage"
-        result['validation'] = "SUCCESS"
-    except:
+        result.update({
+            'bucket_name': bucket_name,
+            'bucket_arn': bucket_arn,
+            'key_name': key_name,
+            'job_name': job_name,
+            'error_bucket_name': "dev-fnt-0501651-batch-error",
+            'archive_bucket_name': "dev-fnt-0501651-batch-archive",
+            'stage_bucket_name': "dev-fnt-0501651-batch-stage",
+            'validation': "SUCCESS"
+        })
+    except Exception as e:
         result['validation'] = "FAILURE"
-        result['reason'] = "Could not initiate validation"
+        result['reason'] = f"Could not initiate validation: {e}"
         result['location'] = 'error'
-        logger_function("ERROR: Could not initiate validation.", type="error")
-        return(result)
+        logger_function(f"ERROR: Could not initiate validation due to {e}.", type="error")
+        return result
 
     if job_name == 'error':
         result['validation'] = "FAILURE"
         result['reason'] = "Invalid batch file name"
         result['location'] = 'error'
-        return(result)
-
-    # Read file as df
+        logger_function("ERROR: Invalid batch file name.", type="error")
+        return result
+        
+    # Get schema and log the outcome
     try:
-        df_source = pd.read_csv(BytesIO(file_content), delimiter=',')
-        source_headers = df_source.columns
-    except:
-        result['validation'] = "FAILURE"
-        result['reason'] = "Could not read batch file"
-        result['location'] = 'error'
-        logger_function("ERROR: Could not read batch file", type="error")
-        return(result)
-
-    # Validate there are records
-    if df_source.count() == 0:
-        result['validation'] = "FAILURE"
-        result['reason'] = "NO RECORD FOUND"
-        result['location'] = 'error'
-        logger_function("ERROR: File has no records", type="error")
-        return(result)
-
-    # Validate column headers
-    try:
-        field_names = [list(e.keys())[0] for e in schema]
-        response, errors = validate_column_headers(source_headers=source_headers, schema_fields=field_names)
-        if not response:
-            raise ValueError(f"Column header mismatch: {errors}")
+        schema = get_schema(file_name=file_name, bucket_name=schema_bucket, schema_folder=schema_folder)
+        if schema:
+            result['validation'] = "SUCCESS"
+            logger_function(f"Successfully fetched schema for {file_name}", type="info")
+        else:
+            raise ValueError(f"Schema for {file_name} is empty or could not be fetched.")
     except Exception as e:
         result['validation'] = "FAILURE"
-        result['reason'] = f"Header validation failed: {e}"
+        result['reason'] = f"Error fetching schema: {e}"
         result['location'] = 'error'
-        logger_function(f"ERROR: Header validation failed: {e}", type="error")
+        logger_function(f"Error fetching schema for {file_name}: {e}", type="error")
         return result
 
-    # Validate records match schema
+    # Fetch the batch file from the S3 bucket
     try:
-        record_validation, record_errors = validate_records(df_source, schema)
-        if not record_validation:
-            raise ValueError(f"Record validation errors: {record_errors}")
+        response = s3.get_object(Bucket=bucket_name, Key=key_name)
+        file_content = response['Body'].read()
+
+        # Reading the batch file content as a DataFrame, and check it has records 
+        
+        df_source = pd.read_csv(io.BytesIO(file_content), delimiter='|',  header=None, skiprows=1, skipfooter=1, engine='python', on_bad_lines='skip',  dtype=str)
+        # df_source = pd.read_csv(BytesIO(file_content), delimiter='|', header=None, skiprows=1)
+        logger_function(f"{file_name} has records", type="info")
+        result['validation'] = "SUCCESS"  # Corrected spelling from 'validaion' to 'validation'
+    except pd.errors.EmptyDataError:
+        result['validation'] = "FAILURE"
+        result['reason'] = f"{file_name} has no records"
+        result['location'] = 'error'
+        logger_function(f"ERROR: {file_name} has no records", type="error")
+        return result 
     except Exception as e:
         result['validation'] = "FAILURE"
-        result['reason'] = f"Record validation failed: {e}"
+        result['reason'] = f"An unexpected error occurred: {e}"
         result['location'] = 'error'
-        logger_function(f"ERROR: Record validation failed: {e}", type="error")
+        logger_function(f"ERROR: An unexpected error occurred while reading {file_name}: {e}", type="error")
+        return result  
+    
+    # Use regex to extract both the date (YYYYMMDD) and time (HHMMSS)
+    match = re.search(r'(\d{8})\.(\d{6})', file_name)
+    if match:
+        # Extract the matched strings for date and time
+        file_date_str = match.group(1)  # First match: YYYYMMDD
+        file_time_str = match.group(2)  # Second match: HHMMSS
+        combined_datetime_str = file_date_str + file_time_str
+
+        try:
+            # Validate the extracted string as a valid date and time (YYYYMMDDHHMMSS)
+            combined_datetime_str = str(combined_datetime_str)
+            file_datetime = datetime.strptime(combined_datetime_str, '%Y%m%d%H%M%S')
+            logger_function(f"batch file has Valid date and time: {file_datetime}", type="info")
+            result['validation'] = "SUCCESS"
+        except ValueError as e:
+            result['validation'] = "FAILURE"
+            result['reason'] = "Invalid date and time format in file name"
+            result['location'] = 'error'
+            logger_function(f"ERROR: Invalid date and time format in file name: {e}", type="error")
+            return result  
+
+    # Validate the records against the schema
+    try:
+        all_errors = validate_records(df_source, schema)
+
+        # Check if there are any validation errors
+        if all_errors:
+            result['validation'] = "FAILURE"
+            result['errors'] = all_errors
+            result['reason'] = "Record validation failed."
+            result['location'] = 'error'
+            logger_function(f"ERROR: Validation failed for {file_name} with errors: {all_errors}", type="error")
+            return result
+        else:
+            logger_function(f"Record validation successful for {file_name}.", type="info")
+            result['validation'] = "SUCCESS"
+    except Exception as e:
+        result['validation'] = "FAILURE"
+        result['reason'] = f"An unexpected error occurred during validation: {e}"
+        result['location'] = 'error'
+        logger_function(f"ERROR: An unexpected error occurred during record validation: {e}", type="error")
         return result
 
     if result['validation'] == "SUCCESS":
         logger_function(f"Batch file {key_name} is valid", type="info")
         logger_function("Moving batch file to next step.", type="info")
+        result['latestBatchFileName'] = file_name
+        result['latestBatchTimestamp'] = combined_datetime_str
         return result
+
