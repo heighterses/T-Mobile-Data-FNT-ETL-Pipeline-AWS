@@ -200,6 +200,7 @@ def validate_record(record, record_index, schema_dict):
 
     return errors
 
+
 ###### lambda primary function ######
 def lambda_handler(event, context):
     """
