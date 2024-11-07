@@ -44,6 +44,7 @@
       "Parameters": {
         "JobName.$": "$.taskresult.job_name",
         "Arguments": {
+          "--JOB_NAME.$": "$.taskresult.job_name",
           "--source_key.$": "$.taskresult.key_name",
           "--source_bucket.$": "$.taskresult.bucket_name",
           "--dest_bucket.$": "$.taskresult.stage_bucket_name",
