@@ -217,6 +217,85 @@ def create_upsert_procedure(cursor):
     # Execute the SQL query to create the stored procedure
     cursor.execute(sql_procedure)
 
+###### function vlaidtes prosessed data row by row and rejects the rows which fail validation ######
+def validate_row(row):
+    """
+    Validates a row of data and returns a boolean indicating success or failure,
+    along with a rejection reason if applicable.
+
+    Args:
+        row (dict): Row data from DataFrame.
+
+    Returns:
+        is_valid (bool): Whether the row is valid.
+        rejection_reason (str): Reason for rejection if row is invalid.
+    """
+    # Check latest_batch_timestamp
+    if pd.isnull(row['latest_batch_timestamp']):
+        return False, "Missing or invalid latest_batch_timestamp"
+
+    # Check latest_batch_filename
+    if not row['latest_batch_filename']:
+        return False, "Missing latest_batch_filename"
+
+    # Check last_timestamp_updated
+    if pd.isnull(row['last_timestamp_updated']):
+        return False, "Missing last_timestamp_updated"
+
+    # Check cof_account_surrogate_id (Primary Key)
+    if not row['cof_account_surrogate_id']:
+        return False, "Missing cof_account_surrogate_id (Primary Key)"
+
+    # Check next_payment_due_date
+    if pd.isnull(row['next_payment_due_date']):
+        return False, "Missing next_payment_due_date"
+    elif row['next_payment_due_date'] < pd.Timestamp.now():
+        return False, "Invalid next_payment_due_date (cannot be in the past)"
+
+    # Check credit_limit
+    if pd.isnull(row['credit_limit']) or row['credit_limit'] < 0:
+        return False, "Missing or invalid credit_limit"
+
+    # Check available_credit
+    if pd.isnull(row['available_credit']):
+        return False, "Missing available_credit"
+    elif row['available_credit'] < 0:
+        return False, "Invalid available_credit (cannot be negative)"
+    elif row['available_credit'] > row['credit_limit']:
+        return False, "Invalid available_credit (cannot exceed credit limit)"
+
+    # Check current_balance
+    if pd.isnull(row['current_balance']) or row['current_balance'] < 0:
+        return False, "Missing or invalid current_balance"
+
+    # Check next_statement_date
+    if pd.isnull(row['next_statement_date']):
+        return False, "Missing next_statement_date"
+    elif row['next_statement_date'] < pd.Timestamp.now():
+        return False, "Invalid next_statement_date (cannot be in the past)"
+
+    # Check last_payment_date
+    if pd.isnull(row['last_payment_date']):
+        return False, "Missing last_payment_date"
+    elif row['last_payment_date'] > pd.Timestamp.now():
+        return False, "Invalid last_payment_date (cannot be in the future)"
+
+    # Check last_payment_amount
+    if pd.isnull(row['last_payment_amount']) or row['last_payment_amount'] < 0:
+        return False, "Missing or invalid last_payment_amount"
+
+    # Check date_last_updated
+    if pd.isnull(row['date_last_updated']):
+        return False, "Missing date_last_updated"
+    elif row['date_last_updated'] > pd.Timestamp.now():
+        return False, "Invalid date_last_updated (cannot be in the future)"
+
+    # Check billing_cycle_day
+    if pd.isnull(row['billing_cycle_day']) or not (1 <= row['billing_cycle_day'] <= 31):
+        return False, "Invalid billing_cycle_day (should be between 1 and 31)"
+
+    return True, None
+
 ###############################################################################
 ###############################################################################
 ############################### FUNCTION START ################################
@@ -282,8 +361,6 @@ column_headers_all = ['RecordType','brand','SurrogateAccountID','Privacymail', '
 column_headers_keep = ['SurrogateAccountID','NextPaymentDueDate', 'CreditLimit', 'AvailableCredit',
                        'CurrentBalance', 'NextStatementDate', 'LastPaymentDate', 'LastPaymentAmount', 'DateLastUpdated', 'BillingCycleDay']
 
-print(column_headers_keep)
-
 # Assuming the .dat file is a CSV-like format, read it into a pandas DataFrame
 # Adjust the parameters of pd.read_csv() as needed for your specific file format
 # Read the file into a pandas DataFrame, skipping the first row and the last row
@@ -327,15 +404,6 @@ df.insert(loc=0, column='LastUpdatedTimestamp', value=batch_timestamp)
 df.insert(loc=0, column='LatestBatchFileName', value=batch_file_name)
 df.insert(loc=0, column='LatestBatchTimestamp', value=batch_timestamp)
 
-# # Add datetime to df
-# df.insert(loc=0, column='LastTimestampUpdated', value=date_time_str1)
-
-# # Add latestBatchTimestamp and latestBatchFileName to df
-# df.insert(loc=0, column='LatestBatchTimestamp', value=batch_timestamp)
-# df.insert(loc=0, column='LatestBatchFileName', value=batch_file_name)
-
-print("new df: ", df)
-
 # # format as parquet and save to s3
 extension = ".parquet"
 s3_prefix = "s3://"
@@ -345,20 +413,17 @@ new_file_name = f"{s3_prefix}{dest_bucket}/cof-account-master/cof_staged_account
 # print("Converting Pandas to PySpark DF")
 # spark_df = spark.createDataFrame(df)
 
-# # Write the dataframe to the specified S3 path in CSV format
-# try:
-#     print("Attempting to write dataframe to specified S3 path in CSV format")
-#     spark_df.write\
-#          .format("parquet")\
-#          .option("quote", None)\
-#          .option("header", "true")\
-#          .mode("append")\
-#          .save(new_file_name)
-#     logger_function("Batch file saved as parquet in stage bucket.", type="info")
-#     print('Writing dataframe successful')
-# except Exception as e:
-#     print('Unable to write dataframe')
-#     raise
+# Write the dataframe to the specified S3 path in CSV format
+try:
+    spark_df.write\
+         .format("parquet")\
+         .option("quote", None)\
+         .option("header", "true")\
+         .mode("append")\
+         .save(new_file_name)
+    logger_function("Batch file saved as parquet in stage bucket.", type="info")
+except Exception as e:
+    raise
     
 
 # Create json file with job details for subsequent Lambda functions
@@ -403,23 +468,33 @@ cursor.execute(sql2)
 
 # Call the function to create the stored procedure
 try:
-    print("Attempting to create upsert procedure")
     create_upsert_procedure(cursor)
-    print("Upsert procedure creation successful")
 except Exception as e:
-    print("Upsert procedure creation failed")
+    logger_function("stored procedure creation for upsert failed", type="error")
 
 # (3) upload dataframe into sql table
 #TODO use pyspark
 try:
     buffer = io.StringIO()
     
-    print('Writing df to csv')
     df.to_csv(buffer, index=False, header=False)
-    print('Successfully written to csv')
 except Exception as e:
-    print('Writing df to csv failed')
-    raise
+    logger_function("writing df to csv failed", type="error")
+
+# Initialize lists to keep track of processed and rejected rows
+processed_rows = []
+rejected_rows = []
+
+for index, row in df.iterrows():
+    is_valid, rejection_reason = validate_row(row)
+    row_json = row.to_json()  # Convert row to JSON format
+
+    if is_valid:
+        # Add to processed list
+        processed_rows.append((batch_file_name, row_json))
+    else:
+        # Add to rejected list with rejection reason
+        rejected_rows.append((batch_file_name, row_json, rejection_reason))
 
 buffer.seek(0)
 
@@ -429,7 +504,6 @@ with cursor:
         print("Copying csv to temp table")
         cursor.copy_expert(f"COPY {temp_tbl_name} FROM STDIN (FORMAT 'csv', HEADER false)", buffer)
         # Trigger upsert stored procedure
-        print("Calling upseert procedure")
         cursor.execute("CALL upsert_temp_to_dummy_card_account_summary();")
         conn.commit()
     except (Exception, psycopg2.DatabaseError) as error:

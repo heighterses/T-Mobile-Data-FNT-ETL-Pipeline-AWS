@@ -103,7 +103,8 @@ def get_schema(file_name, bucket_name, schema_folder):
                 'nullable': row['nullable'],
                 'type': row['datatype'],
                 'date_conversion': row['date_conversion'],
-                'default': row['default']
+                'default': row['default'],
+                'length': int(row['length']) if row['length'].isdigit() else None
             }
 
             schema.append(schema_row)
@@ -131,7 +132,7 @@ def validate_records(df_source, schema):
     schema_dict = {}
     for index, field_schema in enumerate(schema):
         for field_name, field_properties in field_schema.items():
-            schema_dict[index] = field_properties  # Use index as the key
+            schema_dict[index] = field_properties  
 
     # Validate records and collect errors
     all_errors = []
@@ -166,11 +167,12 @@ def validate_record(record, record_index, schema_dict):
             field_schema = schema_dict[index]
             expected_type = field_schema['type']
             nullable = field_schema['nullable']
+            max_length = field_schema.get('length')  
             
-            # Check for empty or null values and skip validation if nullable is True
+            # Check for empty or null values
             if pd.isna(value) or str(value).strip() == '':
                 if nullable.lower() == 'true':
-                    continue  # Skip further validation if the field is nullable
+                    continue  
                 else:
                     # If nullable is false, add error
                     errors.append(f"Record {record_index + 1}: Field {index + 1} cannot be null or empty.")
@@ -185,19 +187,27 @@ def validate_record(record, record_index, schema_dict):
                     # Convert date if in the form YYYYMMDD to YYYY-MM-DD
                     if len(value) == 8 and value.isdigit():
                         value = f"{value[:4]}-{value[4:6]}-{value[6:]}"
-                    
-                    # Now validate using the to_date function
+                
                     try:
-                        to_date(value)  # Use the custom to_date function for validation
+                        to_date(value)  
                     except ValueError:
                         errors.append(f"Record {record_index + 1}: Field {index + 1} should be a valid Date (YYYY-MM-DD).")
 
                 elif expected_type == 'timestamptz':
                     try:
-                        to_datetime(value)  # Use the custom to_datetime function for validation
+                        to_datetime(value)  
                     except ValueError:
                         errors.append(f"Record {record_index + 1}: Field {index + 1} should be a valid Timestamp with Timezone (timestamptz).")
+                
+                ##TODO resolve issue of 2 extra characters for Date fields 
 
+                #  Length validation with reduced length if Date or timestamptz type
+                field_length = len(value)  
+                if expected_type in ['Date', 'timestamptz']:
+                    field_length -= 2  
+
+                if max_length and field_length > max_length:
+                    errors.append(f"Record {record_index + 1}: Field {index + 1} exceeds max length {max_length} (Actual length: {field_length}).")
     return errors
 
 
@@ -212,7 +222,7 @@ def lambda_handler(event, context):
         result (dict): Result dictionary containing validation status and other metadata
     """
     
-    # Initialize the result dictionary at the beginning of the function
+    # Initialize the result dictionary to process the result in next stage 
     result = {
         'validation': "UNKNOWN",  # Default value to indicate unknown status
         'reason': "",
@@ -286,9 +296,8 @@ def lambda_handler(event, context):
         # Reading the batch file content as a DataFrame, and check it has records 
         
         df_source = pd.read_csv(io.BytesIO(file_content), delimiter='|',  header=None, skiprows=1, skipfooter=1, engine='python', on_bad_lines='skip',  dtype=str)
-        # df_source = pd.read_csv(BytesIO(file_content), delimiter='|', header=None, skiprows=1)
         logger_function(f"{file_name} has records", type="info")
-        result['validation'] = "SUCCESS"  # Corrected spelling from 'validaion' to 'validation'
+        result['validation'] = "SUCCESS" 
     except pd.errors.EmptyDataError:
         result['validation'] = "FAILURE"
         result['reason'] = f"{file_name} has no records"
@@ -301,6 +310,37 @@ def lambda_handler(event, context):
         result['location'] = 'error'
         logger_function(f"ERROR: An unexpected error occurred while reading {file_name}: {e}", type="error")
         return result  
+
+    #Load the trailer row separately and validate row count 
+    try:
+        trailer_row = pd.read_csv(
+            io.BytesIO(file_content),
+            delimiter='|',
+            header=None,
+            skiprows=len(df_source) + 1,  # Skip data rows and header row
+            nrows=1,
+            dtype=str
+        )
+        expected_row_count = int(trailer_row.iloc[0, 1])
+        actual_row_count = len(df_source)
+        if actual_row_count != expected_row_count:
+            raise ValueError(f"Row count mismatch: Expected {expected_row_count}, but found {actual_row_count}")
+
+        # Log success if row count matches
+        logger_function(f"Row count validation passed: {actual_row_count} rows", type="info")
+        result['validation'] = "SUCCESS"
+    except ValueError as ve:
+        result['validation'] = "FAILURE"
+        result['reason'] = f"Row count validation failed: {ve}"
+        result['location'] = 'error'
+        logger_function(f"Row count validation failed: {ve}", type="error")
+        return result 
+    except Exception as e:
+        result['validation'] = "FAILURE"
+        result['reason'] = f"Unexpected error in row count validation: {e}"
+        result['location'] = 'error'
+        logger_function(f"Unexpected error in row count validation: {e}", type="error")
+        return result 
     
     # Use regex to extract both the date (YYYYMMDD) and time (HHMMSS)
     match = re.search(r'(\d{8})\.(\d{6})', file_name)
@@ -351,4 +391,3 @@ def lambda_handler(event, context):
         result['latestBatchFileName'] = file_name
         result['latestBatchTimestamp'] = combined_datetime_str
         return result
-
