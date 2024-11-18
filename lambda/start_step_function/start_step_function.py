@@ -72,8 +72,8 @@ def lambda_handler(event, context):
             'schema_folder': schema_key
         }
         
-        logger_function(f"Sending JSON dump to Step Functions as input: ", type="info")
-        logger_function(f"Created a dictionary to send input to step funtion: {step_function_input}", type="info")
+        logger_function("Sending JSON dump to Step Functions as input: ", type="info")
+        logger_function(step_function_input, type="info")
 
         client = boto3.client('stepfunctions')
         # TODO: Parameterize hardcoded step_function_arn
