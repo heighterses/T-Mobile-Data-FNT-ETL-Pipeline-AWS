@@ -128,10 +128,12 @@ def get_temp_table_schema():
         temp_tbl_name (string): Name of temporary table
     """
 
-    temp_tbl_name = "ETLTest.batch_temp_card_account_summary"
-    sql0 = """CREATE SCHEMA IF NOT EXISTS ETLTest;"""
+    temp_tbl_name = "batch.batch_temp_card_account_summary"
+    sql0 = """CREATE SCHEMA IF NOT EXISTS batch;"""
     sql1 =   """
-            CREATE TABLE IF NOT EXISTS ETLTest.batch_temp_card_account_summary(
+            CREATE TABLE IF NOT EXISTS batch.batch_temp_card_account_summary(
+                credit_card_last_four varchar(4),
+                tmo_uuid TEXT,
                 latest_batch_timestamp timestamptz,
                 latest_batch_filename TEXT,
                 last_updated_timestamp timestamptz NOT NULL,
@@ -147,7 +149,7 @@ def get_temp_table_schema():
                 billing_cycle_day INTEGER
             );
             """
-    sql2 =  """DELETE FROM ETLTest.batch_temp_card_account_summary"""
+    sql2 =  """DELETE FROM batch.batch_temp_card_account_summary"""
 
     return sql0, sql1, sql2, temp_tbl_name
 
@@ -162,12 +164,14 @@ def create_upsert_procedure(cursor):
     """
     # Define the SQL for creating the stored procedure
     sql_procedure = """
-    CREATE OR REPLACE PROCEDURE upsert_temp_to_dummy_card_account_summary()
+    CREATE OR REPLACE PROCEDURE etltest.upsert_temp_to_operational_card-account_summary()
     LANGUAGE plpgsql
     AS $$
     BEGIN
+        
         -- Perform the upsert operation from the temporary table to the operational table
-        INSERT INTO ETLTest.dummy_card_account_summary (
+        INSERT INTO etltest.card_account_summary_test (
+            credit_card_last_four,
             tmo_uuid, 
             cof_account_surrogate_id, 
             next_payment_due_date, 
@@ -180,24 +184,27 @@ def create_upsert_procedure(cursor):
             created_timestamp,
             updated_timestamp
         )
-        SELECT 
-             cof_account_surrogate_id,  -- Insert cof_account_surrogate_id into tmo_uuid
-             cof_account_surrogate_id,  -- Insert cof_account_surrogate_id into cof_account_surrogate_id
-             next_payment_due_date, 
-             credit_limit, 
-             available_credit, 
-             current_balance, 
-             next_statement_date, 
-             last_payment_date, 
-             last_payment_amount, 
-             latest_batch_timestamp,
-             last_updated_timestamp
-             
-        FROM 
-            ETLTest.batch_temp_card_account_summary temp
+        SELECT
+            temp.credit_card_last_four,
+            temp.tmo_uuid,  -- Use the joined tmo_uuid
+            temp.cof_account_surrogate_id,
+            temp.next_payment_due_date, 
+            temp.credit_limit, 
+            temp.available_credit, 
+            temp.current_balance, 
+            temp.next_statement_date, 
+            temp.last_payment_date, 
+            temp.last_payment_amount, 
+            temp.latest_batch_timestamp,
+            temp.last_updated_timestamp
+    FROM 
+        batch.batch_temp_card_account_summary temp
         ON CONFLICT (cof_account_surrogate_id) 
         DO UPDATE 
         SET 
+            credit_card_last_four =EXCLUDED.credit_card_last_four,
+            tmo_uuid = EXCLUDED.tmo_uuid,
+            cof_account_surrogate_id = EXCLUDED.cof_account_surrogate_id,
             next_payment_due_date = EXCLUDED.next_payment_due_date,
             credit_limit = EXCLUDED.credit_limit,
             available_credit = EXCLUDED.available_credit,
@@ -206,7 +213,7 @@ def create_upsert_procedure(cursor):
             last_payment_date = EXCLUDED.last_payment_date,
             last_payment_amount = EXCLUDED.last_payment_amount,
             updated_timestamp = EXCLUDED.updated_timestamp
-        WHERE ETLTest.dummy_card_account_summary.updated_timestamp < EXCLUDED.updated_timestamp;
+        WHERE etltest.card_account_summary_test.updated_timestamp < EXCLUDED.updated_timestamp;
 
         RAISE NOTICE 'UPSERT operation completed successfully.';
     EXCEPTION
@@ -316,16 +323,12 @@ dest_bucket = args['dest_bucket']
 batch_file_name = args['batch_file_name']
 batch_timestamp = args['batch_timestamp']
 
-print("received arguments from previous step")
-
 # Initialize Spark context, Glue context, and the Glue job
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
-
-print("gluecontext and sparkcontext initiated")
 
 # initiate logger for CloudWatch
 logger = logging.getLogger()
@@ -338,28 +341,26 @@ s3 = boto3.client('s3')
 response = s3.get_object(Bucket=source_bucket, Key=source_key)
 file_content = response['Body'].read()
 
-print("read file as file_content")
-
 # Assign column headers based on known schema
-column_headers_all = ['RecordType','brand','SurrogateAccountID','Privacymail', 'PrivacyDateMail','PrivacyEmail','PrivacyDateEmail','PrivacyPhone',
-                  'PrivacyDatePhone','GLBFlag','Cardscheme','AccountType','BankruptcyIndicator',
+column_headers_all = ['RecordType','brand','SurrogateAccountID','Privacymail','PrivacyDateMail','PrivacyEmail','PrivacyDateEmail','PrivacyPhone',
+                  'PrivacyDatePhone','GLBFlag','AccountType','BankruptcyIndicator',
                   'AccountClosedIndicator','AccountClosedReason','FraudIndicator','HardshipIndicator',
-                  'DeceasedIndicator','SoldIndicator','ChargeoffIndicator','PotentialFraudIndicator',
+                  'DeceasedIndicator','ChargeoffIndicator','PotentialFraudIndicator',
                   'LostStolenIndicator','BadAddressFlag','PaymentCycleDue','AccountOpenState',
                   'WaiveInterest','WaiveLateFees','NumberofLTDNSFOccurrences','NumberofDisputedTransactions',
                   'AmountinDispute','NumberofUnblockedCardholders','BillingCycleDay','DateLastUpdated','CreditLimit',
-                  'CreditLimitDateChange','CashLimit','ProduceStatement','ExecutiveResolutionAccount',
-                  'ExecutiveResolutionDate','CurrentBalance','AvailableCredit','NumberofCTDpurchases',
+                  'CreditLimitDateChange','CashLimit','ProduceStatement','ExecutiveResolutionAccount', 'CurrentBalance','AvailableCredit','NumberofCTDpurchases',
                   'NumberofCTDreturns','AmountofCTDpurchases','AmountofCTDreturns','NumberofYTDpurchases',
                   'NumberofYTDreturns','NumberofYTDpayments','AmountofYTDpurchases','AmountofYTDreturns',
                   'AmountofYTDpayments','NumberofLTDpurchases','NumberofLTDreturns','NumberofLTDpayments',
                   'AmountofLTDpurchases','AmountofLTDreturns','AmountofLTDpayments','HighBalance',
-                  'HighBalanceDate','HighestYTDPaymentsinaCycle','FixedPaymentIndicator','FixedPaymentAmount',
+                  'HighBalanceDate','FixedPaymentIndicator','FixedPaymentAmount',
                   'NextPaymentDueDate','LastPaymentDate','LastPaymentAmount','LastPurchaseDate','LastPurchaseAmount',
-                  'FirstAuthorizationDate','FirstTransactionDate','NextStatementDate','LanguageIndicator','EarlyLossMitigation','ActivityOpenIndicator','PaperlessStatementIndicator','AccountClosedDate','ProductIdentifier','ProductName']
+                  'FirstAuthorizationDate','FirstTransactionDate','NextStatementDate','LanguageIndicator','DaysDelinquency','ActivitySinceOpenIndicator','PaperlessStatementIndicator','AccountClosedDate']
 
 column_headers_keep = ['SurrogateAccountID','NextPaymentDueDate', 'CreditLimit', 'AvailableCredit',
                        'CurrentBalance', 'NextStatementDate', 'LastPaymentDate', 'LastPaymentAmount', 'DateLastUpdated', 'BillingCycleDay']
+
 
 # Assuming the .dat file is a CSV-like format, read it into a pandas DataFrame
 # Adjust the parameters of pd.read_csv() as needed for your specific file format
@@ -369,7 +370,6 @@ logger_function("Attempting to read batch file...", type="info")
 df = pd.read_csv(io.BytesIO(file_content), delimiter='|',skiprows=1, skipfooter=1, engine='python', on_bad_lines='skip', names = column_headers_all, dtype=str)
 df = df[column_headers_keep]
 
-print(df)
 
 # Define the desired data types for each column
 dtype_dict = {
@@ -404,14 +404,17 @@ df.insert(loc=0, column='LastUpdatedTimestamp', value=batch_timestamp)
 df.insert(loc=0, column='LatestBatchFileName', value=batch_file_name)
 df.insert(loc=0, column='LatestBatchTimestamp', value=batch_timestamp)
 
+# Add tmo_uuid column with empty values to match the table schema
+df.insert(loc=0, column='tmoUUID', value=None)  
+df.insert(loc=0, column='CreditCardLastFour', value=None)
+
 # # format as parquet and save to s3
 extension = ".parquet"
 s3_prefix = "s3://"
 new_file_name = f"{s3_prefix}{dest_bucket}/cof-account-master/cof_staged_account_master_{date_time_str2}.{extension}"
 
-# # Convert Pandas DataFrame to PySpark DataFrame
-# print("Converting Pandas to PySpark DF")
-# spark_df = spark.createDataFrame(df)
+# Convert Pandas DataFrame to PySpark DataFrame
+spark_df = spark.createDataFrame(df)
 
 # Write the dataframe to the specified S3 path in CSV format
 try:
@@ -437,11 +440,9 @@ result['s3_key'] = f"cof-account-master/cof_staged_account_master_{date_time_str
 result['my_key'] = f"cof-account-master/cof_staged_account_master_metadata.json"
 
 # Write json file to S3
-print("Writing JSON")
 json_obj = json.dumps(result)
 s3.put_object(Bucket=dest_bucket, Key=result['my_key'], Body=json_obj)
 logger_function("Metadate written to stage bucket.", type="info")
-print("JSON Writing successful")
 
 # return credentials for connecting to Aurora Postgres
 logger_function("Attempting Aurora Postgres connection...", type="info")
@@ -452,18 +453,13 @@ credential = get_db_secret(secret_name="rds/dev/fnt/admin", region_name="us-west
 dbname = "dev_fnt_rds_card_account_service"
 conn = db_connector(credential, dbname)
 cursor = conn.cursor()
-print("Database: ", conn)
 
 # (1) create if not exists temp table in RDS (e.g., tbl_temp_cof_account_master)
-print('Creating temporary tables')
 sql0, sql1, sql2, temp_tbl_name = get_temp_table_schema()
 cursor.execute(sql0)
 cursor.execute(sql1)
 
-print("Temp Table: ", sql0)
-
 # (2) whether we create a new table or not, need to remove all records as it should be empty
-print('Truncating temp table')
 cursor.execute(sql2)
 
 # Call the function to create the stored procedure
@@ -472,14 +468,6 @@ try:
 except Exception as e:
     logger_function("stored procedure creation for upsert failed", type="error")
 
-# (3) upload dataframe into sql table
-#TODO use pyspark
-try:
-    buffer = io.StringIO()
-    
-    df.to_csv(buffer, index=False, header=False)
-except Exception as e:
-    logger_function("writing df to csv failed", type="error")
 
 # Initialize lists to keep track of processed and rejected rows
 processed_rows = []
@@ -490,32 +478,95 @@ for index, row in df.iterrows():
     row_json = row.to_json()  # Convert row to JSON format
 
     if is_valid:
-        # Add to processed list
         processed_rows.append((batch_file_name, row_json))
     else:
-        # Add to rejected list with rejection reason
         rejected_rows.append((batch_file_name, row_json, rejection_reason))
 
-buffer.seek(0)
+# Log processed and rejected rows
+try:
+    if processed_rows:
+        logger_function(f"Logging {len(processed_rows)} processed rows to processed_data_log.", type="info")
+        cursor.executemany(
+            "INSERT INTO batch.processed_data_log_account_summary (batch_file_name, row_data) VALUES (%s, %s);",
+            processed_rows
+        )
+    else:
+        logger_function("No processed rows to log.", type="info")
+except Exception as error:
+    logger_function(f"Error logging processed rows: {error}", type="error")
 
-print('Upserting')
-with cursor:
+try:
+    if rejected_rows:
+        logger_function(f"Logging {len(rejected_rows)} rejected rows to rejected_data_log.", type="info")
+        cursor.executemany(
+            "INSERT INTO batch.rejected_data_log_account_summary (batch_file_name, row_data, rejection_reason) VALUES (%s, %s, %s);",
+            rejected_rows
+        )
+    else:
+        logger_function("No rejected rows to log.", type="info")
+except Exception as error:
+    logger_function(f"Error logging rejected rows: {error}", type="error")
+
+# Upsert processed rows
+if processed_rows:
+    buffer = io.StringIO()
     try:
-        print("Copying csv to temp table")
+        # Prepare data for bulk insertion
+        logger_function("Converting processed rows to CSV format for temp table.", type="info")
+        pd.DataFrame(processed_rows, columns=["batch_file_name", "row_data"]).to_csv(buffer, index=False, header=False)
+        buffer.seek(0)
+
+        # Copy data into the temp table
+        logger_function("Copying processed rows to temporary table.", type="info")
         cursor.copy_expert(f"COPY {temp_tbl_name} FROM STDIN (FORMAT 'csv', HEADER false)", buffer)
-        # Trigger upsert stored procedure
-        cursor.execute("CALL upsert_temp_to_dummy_card_account_summary();")
-        conn.commit()
-    except (Exception, psycopg2.DatabaseError) as error:
-        logger_function("Error: %s" % error, type="error")
 
-# (4) TODO move temp table data to "operational table":
-#options are using Lambda (bad), using Postgres trigger (better), step functions, glue, etc. (best)
+    except Exception as error:
+        logger_function(f"Error during Copying processed rows to temporary table: {error}", type="error")
 
-# closing the connection
-cursor.close()
-conn.close()
-logger_function("Batch file copied to RDS.", type="info")
+else:
+    logger_function("No processed rows to upsert.", type="info")
+
+#Populate tmo_uuid and credit_card_last_four in the temporary table
+try:
+    update_query = """
+        -- Populate tmo_uuid  and caredit_card_last_four in the temporary table by joining with card_account_status
+        UPDATE batch.batch_temp_card_account_summary temp
+        SET 
+            tmo_uuid = status.tmo_uuid,
+            credit_card_last_four =status.cof_primary_card_last_four
+            
+        FROM etltest.card_account_status status
+        WHERE temp.cof_account_surrogate_id = status.cof_account_surrogate_id;
+    """
+    cursor.execute(update_query)
+    conn.commit()
+    logger_function("tmo_uuid and credit_card_last_four populated in temporary table successfully.", type="info")
+except Exception as e:
+    logger_function(f"Error populating tmo_uuid and credit_card_last_four in temp table: {e}", type="error")
+    raise
+
+# Call the upsert stored procedure to upsert data from temp table to operational table
+try:
+    logger_function("Calling stored procedure to upsert data into operational table.", type="info")
+    cursor.execute("CALL etltest.upsert_temp_to_operational_card-account_summary();")
+    conn.commit()
+    logger_function("Upsert operation completed successfully.", type="info")
+except Exception as error:
+    logger_function(f"Error during upsert operation: {error}", type="error")
+
+
+# Close connections
+try:
+    cursor.close()
+    conn.close()
+    logger_function("Database connections closed successfully.", type="info")
+except Exception as error:
+    logger_function(f"Error closing database connections: {error}", type="error")
 
 # Commit the Glue job
-job.commit()
+try:
+    job.commit()
+    logger_function("Glue job committed successfully.", type="info")
+except Exception as error:
+    logger_function(f"Error committing Glue job: {error}", type="error")
+

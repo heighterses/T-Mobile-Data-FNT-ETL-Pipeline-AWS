@@ -180,14 +180,14 @@ response = s3.get_object(Bucket=source_bucket, Key=source_key)
 file_content = response['Body'].read()
 
 # Assign column headers based on known schema
-column_headers_all = ['RecordType','brand','CardNumber','PriorCardNumber', 'DateLastTransfer','SurrogateAccountID ',
+column_headers_all = ['RecordType','brand','CardNumber','PriorCardNumber', 'DateLastTransfer','SurrogateAccountID',
                   'SurrogateCustomerID','Cardholderrole',
                   'CurrentExpirationDate','Correspondencename','Addressline1.','Addressline2','City',
                   'State/province','Postalcode','CountryCode','Foreignaddress',
                   'TaxID/SSNlast4','DateofBirth','Emailaddress','Landlinephonenumber',
                   'Mobilephonenumber','Employerphonenumber','Employername','Embossednameline1',
                   'Dateaddresslastupdated','Datelastupdated','Bankruptcy','Closed',
-                  'Fraud','Deceased','PotentialFraud','Lost/Stolen','AmericanDisabilityAct(ADA)']
+                  'Fraud','Deceased','PotentialFraud','Lost/Stolen','AmericanDisabilityAct(ADA)', 'CardActivatedIndicator']
 #TODO which columns need to be kept                  
 column_headers_keep = []
 
