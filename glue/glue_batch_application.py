@@ -181,8 +181,8 @@ file_content = response['Body'].read()
 
 # Assign column headers based on known schema
 column_headers_all = ['RecordType','brand','Accounttype','Applicationidentifier', 'ApplicationDate','Channeltype','Merchant/StoreNumber','ApplicationDecision',
-                  'AccountIdentifier','SubChannel','DigitalEntryChannel','RegisterID','AssociateID',
-                  'OfferType ','PartnerRequestApplicationID(if applicable)']
+                  'SurrogateAccountId','SubChannel','DigitalEntryChannel','RegisterID','AssociateID',
+                  'OfferType']
 
 #TODO which columns need to be kept                  
 column_headers_keep = []
