@@ -75,7 +75,7 @@ def get_schema(file_name, bucket_name, schema_folder):
     s3 = boto3.client('s3')
 
     # Define the schema file path based on the file type in the batch file name
-    if 'transaction' in file_name:
+    if 'DailyTransactions' in file_name:
         schema_key = f"{schema_folder}/transaction_schema.csv"
     elif 'DailyAccountMaster' in file_name:
         schema_key = f"{schema_folder}/account_schema.csv"
@@ -90,7 +90,7 @@ def get_schema(file_name, bucket_name, schema_folder):
     try:
         # Fetch the schema file from S3
         response = s3.get_object(Bucket=bucket_name, Key=schema_key)
-        schema_content = response['Body'].read().decode('utf-8')
+        schema_content = response['Body'].read().decode('utf-8-sig')
 
         # Read the CSV content using csv.DictReader
         csv_reader = csv.DictReader(io.StringIO(schema_content))
