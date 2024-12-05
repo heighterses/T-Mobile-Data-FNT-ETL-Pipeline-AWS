@@ -182,6 +182,23 @@ def validate_record(record, record_index, schema_dict):
             if value:
                 if expected_type in ['Small Char', 'Medium Char', 'Long Char'] and not isinstance(value, str):
                     errors.append(f"Record {record_index + 1}: Field {index + 1} should be a Text (String).")
+                    
+                # elif expected_type in ['Small Num', 'Medium Num']:
+                #     try:
+                #         # Attempt to convert the value to an integer
+                #         int_value = int(value)
+                #     except ValueError:
+                #         # If conversion fails, it's not a valid integer, so we append an error
+                #         errors.append(f"Record {record_index + 1}: Field {index + 1} should be an Integer (Small Num, Medium Num).")
+
+                
+                elif expected_type in ['Decimal']:
+                    try:
+                        # Attempt to convert the value to a decimal (float)
+                        decimal_value = float(value)
+                    except ValueError:
+                        # If conversion fails, it's not a valid decimal, so we append an error
+                        errors.append(f"Record {record_index + 1}: Field {index + 1} should be a Decimal value.")
                 
                 elif expected_type == 'Date':
                     # Convert date if in the form YYYYMMDD to YYYY-MM-DD
