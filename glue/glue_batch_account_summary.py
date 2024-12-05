@@ -164,7 +164,7 @@ def create_upsert_procedure(cursor):
     """
     # Define the SQL for creating the stored procedure
     sql_procedure = """
-    CREATE OR REPLACE PROCEDURE etltest.upsert_temp_to_operational_card-account_summary()
+    CREATE OR REPLACE PROCEDURE batch.upsert_temp_to_operational_card_account_summary()
     LANGUAGE plpgsql
     AS $$
     BEGIN
@@ -224,84 +224,128 @@ def create_upsert_procedure(cursor):
     # Execute the SQL query to create the stored procedure
     cursor.execute(sql_procedure)
 
-###### function vlaidtes prosessed data row by row and rejects the rows which fail validation ######
-def validate_row(row):
+###### validation and partition function ######
+def validate_and_partition_df(df, conn):
     """
-    Validates a row of data and returns a boolean indicating success or failure,
-    along with a rejection reason if applicable.
+    Uses queries on df to validate records and partition into processed and rejected dataframes.
 
     Args:
-        row (dict): Row data from DataFrame.
+        df (df): Pandas DataFrame.
+        conn (object): Connection object on Aurora Postgres instance
 
     Returns:
-        is_valid (bool): Whether the row is valid.
-        rejection_reason (str): Reason for rejection if row is invalid.
+        temp_df (df): Pandas Dataframe with records to be processed in Postgres, in temporary table format
+        processed_df (df): Pandas Dataframe with records to be processed in Postgres
+        rejected_df (df): Pandas Dataframe with records to be rejected in Postgres
     """
-    # Check latest_batch_timestamp
-    if pd.isnull(row['latest_batch_timestamp']):
-        return False, "Missing or invalid latest_batch_timestamp"
+    ### Filter Criteria ###
 
-    # Check latest_batch_filename
-    if not row['latest_batch_filename']:
-        return False, "Missing latest_batch_filename"
+    # STEP 1: remove records with nulls or incorrect values
+    # LatestBatchFileName NOT NULL
+    # LastUpdatedTimestamp NOT NULL
+    # cof_account_surrogate_id NOT NULL
+    # CreditLimit NOT NULL and greater than or equal to zero
+    # AvailableCredit NOT NULL and greater than or equal to zero
+    # CurrentBalance NOT NULL and greater than or equal to zero
+    # LastPaymentAmount NOT NULL and greater than or equal to zero
+    # DateLastUpdated NOT NULL
+    # BillingCycleDay is between 1 and 31
 
-    # Check last_timestamp_updated
-    if pd.isnull(row['last_timestamp_updated']):
-        return False, "Missing last_timestamp_updated"
+    now_var = pd.Timestamp.now()
+    processed_df = df.query("LatestBatchFileName.notnull() & \
+                            LastUpdatedTimestamp.notnull() & \
+                            SurrogateAccountID.notnull() & \
+                            CreditLimit.notnull() & \
+                            CreditLimit >= 0 & \
+                            AvailableCredit.notnull() & \
+                            AvailableCredit >= 0 & \
+                            CurrentBalance.notnull() & \
+                            CurrentBalance >= 0 & \
+                            LastPaymentAmount.notnull() & \
+                            LastPaymentAmount > 0 & \
+                            DateLastUpdated.notnull() & \
+                            BillingCycleDay > 0 & \
+                            BillingCycleDay < 32 \
+                            ")
+    # rejected rows are the records filtered out
+    # rejected rows receive generic rejection reason
+    processed_idxs = processed_df.index.values.tolist()
+    temp_df = df.loc[~df.index.isin(processed_idxs)]
+    if len(temp_df) > 0:
+        temp_df["rejection_reason"] = "record contains null or incorrect values in one or more required fields"
+        rejected_df = temp_df.copy()
+        del temp_df
+    else:
+        # initialize empty dataframe for rejected_df
+        rejected_df = pd.DataFrame(columns=df.columns)
+        rejected_df["rejection_reason"] = None
 
-    # Check cof_account_surrogate_id (Primary Key)
-    if not row['cof_account_surrogate_id']:
-        return False, "Missing cof_account_surrogate_id (Primary Key)"
+    # replace NaN with blanks
+    processed_df = processed_df.fillna('')
+    rejected_df = rejected_df.fillna('')
 
-    # Check next_payment_due_date
-    if pd.isnull(row['next_payment_due_date']):
-        return False, "Missing next_payment_due_date"
-    elif row['next_payment_due_date'] < pd.Timestamp.now():
-        return False, "Invalid next_payment_due_date (cannot be in the past)"
+    # reformat processed_df as json 
+    processed_df_tbl = processed_df.astype(str)
+    processed_df_tbl['row_data'] = '{ \
+                                "credit_card_last_four": "'+processed_df_tbl['CreditCardLastFour']+'", \
+                                "tmo_uuid": "'+processed_df_tbl['tmoUUID']+'", \
+                                "latest_batch_timestamp": "'+processed_df_tbl['LatestBatchTimestamp']+'", \
+                                "latest_batch_filename": "'+processed_df_tbl['LatestBatchFileName']+'", \
+                                "last_updated_timestamp": "'+processed_df_tbl['LastUpdatedTimestamp']+'", \
+                                "cof_account_surrogate_id": "'+processed_df_tbl['SurrogateAccountID']+'", \
+                                "next_payment_due_Date": "'+processed_df_tbl['NextPaymentDueDate']+'", \
+                                "credit_limit": "'+processed_df_tbl['CreditLimit']+'", \
+                                "available_credit": "'+processed_df_tbl['AvailableCredit']+'", \
+                                "current_balance": "'+processed_df_tbl['CurrentBalance']+'", \
+                                "next_statement_date": "'+processed_df_tbl['NextStatementDate']+'", \
+                                "last_payment_date": "'+processed_df_tbl['LastPaymentDate']+'", \
+                                "last_payment_amount": "'+processed_df_tbl['LastPaymentAmount']+'", \
+                                "date_last_updated": "'+processed_df_tbl['DateLastUpdated']+'", \
+                                "billing_cycle_day": "'+processed_df_tbl['BillingCycleDay']+'" \
+                                }'
+    # processed_df_tbl['row_data'] = processed_df_tbl.apply(lambda r: r.to_json())
 
-    # Check credit_limit
-    if pd.isnull(row['credit_limit']) or row['credit_limit'] < 0:
-        return False, "Missing or invalid credit_limit"
+    # Adjust processed_df for sql table format
+    processed_df_final_cols = ['LatestBatchFileName','row_data']
+    processed_df_tbl = processed_df_tbl[processed_df_final_cols]
+    process_timestamp = pd.to_datetime(now_var, format="%Y%m%d%H%M%S")
+    processed_df_tbl['processed_at'] = process_timestamp
 
-    # Check available_credit
-    if pd.isnull(row['available_credit']):
-        return False, "Missing available_credit"
-    elif row['available_credit'] < 0:
-        return False, "Invalid available_credit (cannot be negative)"
-    elif row['available_credit'] > row['credit_limit']:
-        return False, "Invalid available_credit (cannot exceed credit limit)"
+    # reformat rejected_df as json 
+    rejected_df_tbl = rejected_df.astype(str)
+    rejected_df_tbl['row_data'] = '{ \
+                                "credit_card_last_four": "'+rejected_df_tbl['CreditCardLastFour']+'", \
+                                "tmo_uuid": "'+rejected_df_tbl['tmoUUID']+'", \
+                                "latest_batch_timestamp": "'+rejected_df_tbl['LatestBatchTimestamp']+'", \
+                                "latest_batch_filename": "'+rejected_df_tbl['LatestBatchFileName']+'", \
+                                "last_updated_timestamp": "'+rejected_df_tbl['LastUpdatedTimestamp']+'", \
+                                "cof_account_surrogate_id": "'+rejected_df_tbl['SurrogateAccountID']+'", \
+                                "next_payment_due_Date": "'+rejected_df_tbl['NextPaymentDueDate']+'", \
+                                "credit_limit": "'+rejected_df_tbl['CreditLimit']+'", \
+                                "available_credit": "'+rejected_df_tbl['AvailableCredit']+'", \
+                                "current_balance": "'+rejected_df_tbl['CurrentBalance']+'", \
+                                "next_statement_date": "'+rejected_df_tbl['NextStatementDate']+'", \
+                                "last_payment_date": "'+rejected_df_tbl['LastPaymentDate']+'", \
+                                "last_payment_amount": "'+rejected_df_tbl['LastPaymentAmount']+'", \
+                                "date_last_updated": "'+rejected_df_tbl['DateLastUpdated']+'", \
+                                "billing_cycle_day": "'+rejected_df_tbl['BillingCycleDay']+'" \
+                                }'
+    # rejected_df_tbl['row_data'] = rejected_df_tbl.apply(lambda r: r.to_json())
 
-    # Check current_balance
-    if pd.isnull(row['current_balance']) or row['current_balance'] < 0:
-        return False, "Missing or invalid current_balance"
+    # Adjust rejected_df for sql table format
+    rejected_df_final_cols = ['LatestBatchFileName','row_data','rejection_reason']
+    rejected_df_tbl = rejected_df_tbl[rejected_df_final_cols]
+    rejected_df_tbl['rejected_at'] = process_timestamp
+    rejected_df_tbl['is_resolved'] = False
+    rejected_df_tbl['comments'] = ''
 
-    # Check next_statement_date
-    if pd.isnull(row['next_statement_date']):
-        return False, "Missing next_statement_date"
-    elif row['next_statement_date'] < pd.Timestamp.now():
-        return False, "Invalid next_statement_date (cannot be in the past)"
+    rejected_df_tbl_final_cols = ['LatestBatchFileName','row_data','rejected_at',
+                 'rejection_reason','is_resolved','comments']
+    rejected_df_tbl = rejected_df_tbl[rejected_df_tbl_final_cols]
 
-    # Check last_payment_date
-    if pd.isnull(row['last_payment_date']):
-        return False, "Missing last_payment_date"
-    elif row['last_payment_date'] > pd.Timestamp.now():
-        return False, "Invalid last_payment_date (cannot be in the future)"
+    return processed_df, processed_df_tbl, rejected_df_tbl
 
-    # Check last_payment_amount
-    if pd.isnull(row['last_payment_amount']) or row['last_payment_amount'] < 0:
-        return False, "Missing or invalid last_payment_amount"
 
-    # Check date_last_updated
-    if pd.isnull(row['date_last_updated']):
-        return False, "Missing date_last_updated"
-    elif row['date_last_updated'] > pd.Timestamp.now():
-        return False, "Invalid date_last_updated (cannot be in the future)"
-
-    # Check billing_cycle_day
-    if pd.isnull(row['billing_cycle_day']) or not (1 <= row['billing_cycle_day'] <= 31):
-        return False, "Invalid billing_cycle_day (should be between 1 and 31)"
-
-    return True, None
 
 ###############################################################################
 ###############################################################################
@@ -414,19 +458,19 @@ s3_prefix = "s3://"
 new_file_name = f"{s3_prefix}{dest_bucket}/cof-account-master/cof_staged_account_master_{date_time_str2}.{extension}"
 
 # Convert Pandas DataFrame to PySpark DataFrame
-spark_df = spark.createDataFrame(df)
+# spark_df = spark.createDataFrame(df)
 
-# Write the dataframe to the specified S3 path in CSV format
-try:
-    spark_df.write\
-         .format("parquet")\
-         .option("quote", None)\
-         .option("header", "true")\
-         .mode("append")\
-         .save(new_file_name)
-    logger_function("Batch file saved as parquet in stage bucket.", type="info")
-except Exception as e:
-    raise
+# # Write the dataframe to the specified S3 path in CSV format
+# try:
+#     spark_df.write\
+#          .format("parquet")\
+#          .option("quote", None)\
+#          .option("header", "true")\
+#          .mode("append")\
+#          .save(new_file_name)
+#     logger_function("Batch file saved as parquet in stage bucket.", type="info")
+# except Exception as e:
+#     raise
     
 
 # Create json file with job details for subsequent Lambda functions
@@ -469,64 +513,74 @@ except Exception as e:
     logger_function("stored procedure creation for upsert failed", type="error")
 
 
-# Initialize lists to keep track of processed and rejected rows
-processed_rows = []
-rejected_rows = []
+# (3) Split batch file into processed and rejected dataframes based on validations
+temp_df, processed_df, rejected_df = validate_and_partition_df(df, conn)
 
-for index, row in df.iterrows():
-    is_valid, rejection_reason = validate_row(row)
-    row_json = row.to_json()  # Convert row to JSON format
+print(processed_df)
 
-    if is_valid:
-        processed_rows.append((batch_file_name, row_json))
-    else:
-        rejected_rows.append((batch_file_name, row_json, rejection_reason))
+###############################################################################
+############################### SQL COPY COMMANDS #############################
+###############################################################################
 
-# Log processed and rejected rows
+# TODO TEMPORARY SOLUTION - RECONNECT as we are losing connection object after each copy
+
+# TODO use pyspark
+# (4a) Upload processed_df (append)
 try:
-    if processed_rows:
-        logger_function(f"Logging {len(processed_rows)} processed rows to processed_data_log.", type="info")
-        cursor.executemany(
-            "INSERT INTO batch.processed_data_log_account_summary (batch_file_name, row_data) VALUES (%s, %s);",
-            processed_rows
-        )
-    else:
-        logger_function("No processed rows to log.", type="info")
-except Exception as error:
-    logger_function(f"Error logging processed rows: {error}", type="error")
-
-try:
-    if rejected_rows:
-        logger_function(f"Logging {len(rejected_rows)} rejected rows to rejected_data_log.", type="info")
-        cursor.executemany(
-            "INSERT INTO batch.rejected_data_log_account_summary (batch_file_name, row_data, rejection_reason) VALUES (%s, %s, %s);",
-            rejected_rows
-        )
-    else:
-        logger_function("No rejected rows to log.", type="info")
-except Exception as error:
-    logger_function(f"Error logging rejected rows: {error}", type="error")
-
-# Upsert processed rows
-if processed_rows:
     buffer = io.StringIO()
+    processed_df.to_csv(buffer, index=False, header=False)
+except Exception as e:
+    logger_function(f"writing processed_df to csv failed: {e}", type="error")
+buffer.seek(0)
+with cursor:
     try:
-        # Prepare data for bulk insertion
-        logger_function("Converting processed rows to CSV format for temp table.", type="info")
-        pd.DataFrame(processed_rows, columns=["batch_file_name", "row_data"]).to_csv(buffer, index=False, header=False)
-        buffer.seek(0)
+        print("Copying csv to processed_df table")
+        processed_df_tbl_name = 'batch.processed_data_log_account_summary'
+        processed_df_tbl_cols = '(batch_file_name,row_data,processed_at)'
+        cursor.copy_expert(f"COPY {processed_df_tbl_name}{processed_df_tbl_cols} FROM STDIN (FORMAT 'csv', HEADER false)", buffer)
+        conn.commit()
+    except (Exception, psycopg2.DatabaseError) as error:
+        logger_function("Error: %s" % error, type="error")
 
-        # Copy data into the temp table
-        logger_function("Copying processed rows to temporary table.", type="info")
+# (4b) Upload rejected_df (append)
+conn = db_connector(credential, dbname)
+cursor = conn.cursor()
+try:
+    buffer = io.StringIO()
+    rejected_df.to_csv(buffer, index=False, header=False)
+except Exception as e:
+    logger_function(f"writing rejected_df to csv failed: {e}", type="error")
+buffer.seek(0)
+with cursor:
+    try:
+        print("Copying csv to rejected_df table")
+        rejected_df_tbl_name = 'batch.rejected_data_log_account_summary'
+        rejected_df_tbl_cols = '(batch_file_name,row_data,rejected_at,rejection_reason,is_resolved,comments)'
+        cursor.copy_expert(f"COPY {rejected_df_tbl_name}{rejected_df_tbl_cols} FROM STDIN (FORMAT 'csv', HEADER false)", buffer)
+        conn.commit()
+    except (Exception, psycopg2.DatabaseError) as error:
+        logger_function("Error: %s" % error, type="error")
+
+# (4c) Upload temp_df (replace)
+conn = db_connector(credential, dbname)
+cursor = conn.cursor()
+try:
+    buffer = io.StringIO()
+    temp_df.to_csv(buffer, index=False, header=False)
+except Exception as e:
+    logger_function(f"writing df to csv failed: {e}", type="error")
+buffer.seek(0)
+with cursor:
+    try:
+        print("Copying csv to temp table")
         cursor.copy_expert(f"COPY {temp_tbl_name} FROM STDIN (FORMAT 'csv', HEADER false)", buffer)
-
-    except Exception as error:
-        logger_function(f"Error during Copying processed rows to temporary table: {error}", type="error")
-
-else:
-    logger_function("No processed rows to upsert.", type="info")
+        conn.commit()
+    except (Exception, psycopg2.DatabaseError) as error:
+        logger_function("Error: %s" % error, type="error")
 
 #Populate tmo_uuid and credit_card_last_four in the temporary table
+conn = db_connector(credential, dbname)
+cursor = conn.cursor()
 try:
     update_query = """
         -- Populate tmo_uuid  and caredit_card_last_four in the temporary table by joining with card_account_status
@@ -545,10 +599,12 @@ except Exception as e:
     logger_function(f"Error populating tmo_uuid and credit_card_last_four in temp table: {e}", type="error")
     raise
 
+conn = db_connector(credential, dbname)
+cursor = conn.cursor()
 # Call the upsert stored procedure to upsert data from temp table to operational table
 try:
     logger_function("Calling stored procedure to upsert data into operational table.", type="info")
-    cursor.execute("CALL etltest.upsert_temp_to_operational_card-account_summary();")
+    cursor.execute("CALL batch.upsert_temp_to_operational_card_account_summary();")
     conn.commit()
     logger_function("Upsert operation completed successfully.", type="info")
 except Exception as error:
